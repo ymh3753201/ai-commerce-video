@@ -1,0 +1,25 @@
+name: Feature request
+description: Propose a commerce workflow or video-model adapter improvement.
+title: "[Feature]: "
+labels:
+  - enhancement
+body:
+  - type: textarea
+    id: use_case
+    attributes:
+      label: Commerce use case
+      description: Explain the platform, product type, and desired outcome.
+    validations:
+      required: true
+  - type: textarea
+    id: capability
+    attributes:
+      label: Required capability
+      description: For model adapters, include provider schema, duration, references, audio, and polling behavior.
+    validations:
+      required: true
+  - type: textarea
+    id: safety
+    attributes:
+      label: Cost, asset, subtitle, and compliance impact
+      description: Explain how the existing production gates should be preserved.

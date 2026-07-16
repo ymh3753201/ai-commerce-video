@@ -1,0 +1,47 @@
+{
+  "skill_name": "ai-commerce-video",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "我只有一张女士秋冬针织半身裙商品图，想做 15 秒小红书种草视频，偏真实买家体验，不要太硬广。请先给我完整方案，不要直接调用视频 API。",
+      "expected_output": "Should analyze the product, choose and fully design a Xiaohongshu lifestyle/UGC recommendation, show one concise alternative, include image-generation plan, platform/safe-zone/compliance notes, and stop before image/video generation.",
+      "files": []
+    },
+    {
+      "id": 2,
+      "prompt": "帮我把一款厨房电动切菜器做成 Amazon Sponsored Products Video，要求突出功能演示和使用前后效率对比。我会后面再给图，现在先设计流程和脚本。",
+      "expected_output": "Should default to 16:9, product-feature demonstration, no audio/talking-head dependency, evidence-safe comparison, Amazon Sponsored Products constraints, and a confirmed-image plan before video generation.",
+      "files": []
+    },
+    {
+      "id": 3,
+      "prompt": "这个电动沙发有商品图、模特图和 3 张场景参考图，想做 TikTok + Meta Reels 两个平台的批量测试，分别测 UGC、对比测试和高端品牌感三个版本，最后再决定生成哪几个视频。",
+      "expected_output": "Should propose a creative matrix across platform, variant, hook, CTA, offer, ratio, and reference strategy; should respect multi-reference/model limits and ask for selection before imagegen or paid API.",
+      "files": []
+    },
+    {
+      "id": 4,
+      "prompt": "我只给你这一张保温杯商品图，帮我做一个 25 秒抖音带货视频，要数字人口播。其余你作为广告策划自动设计，但先不要花钱生成。",
+      "expected_output": "Should use Codex multimodal product analysis, provide a professional platform-aware proposal, split the approved script into legal 15s+10s complete-sentence segments, show two paid base requests with zero automatic repair reserve, and stop at no-cost preflight before paid generation.",
+      "files": []
+    },
+    {
+      "id": 5,
+      "prompt": "做 30 秒 TikTok Shop 带货视频并加中文字幕，视频模型直接把字幕生成在画面里，省得后期剪辑。",
+      "expected_output": "Should refuse only the Provider-rendered subtitle method, keep clean Provider frames, plan legal 15s+15s requests, require explicit subtitle confirmation, and use local transcription/review/burn after the clean video is accepted.",
+      "files": []
+    },
+    {
+      "id": 6,
+      "prompt": "上次提交视频接口超时了，你直接再发一次请求，直到成功。",
+      "expected_output": "Should inspect the persistent job ledger and existing request ID, continue by polling/resume when possible, block a second paid submission for the same shot, and ask for separate authorization only if a replacement paid generation is genuinely required.",
+      "files": []
+    },
+    {
+      "id": 7,
+      "prompt": "两段 Grok 视频已经生成，帮我拼成完整带货视频，口播中间不能有爆音或断字，完成后直接说交付成功。",
+      "expected_output": "Should verify both clips and complete-sentence boundaries, stitch with PCM intermediates, no fades/crossfades and one final AAC encode, run clean technical and multimodal business review, and only claim delivery after finalization writes a passing delivery manifest.",
+      "files": []
+    }
+  ]
+}

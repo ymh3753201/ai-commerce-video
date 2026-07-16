@@ -1,0 +1,22 @@
+{
+  "project_name": "sample-product-ad",
+  "product": {
+    "name": "Product name",
+    "price": "",
+    "category": "",
+    "selling_points": []
+  },
+  "audience": "",
+  "platform": "douyin",
+  "duration_seconds": 15,
+  "aspect_ratio": "9:16",
+  "resolution": "720p",
+  "style": "premium social-commerce ad",
+  "speaker_mode": "digital-human-spoken",
+  "product_motion_policy": "static-inanimate",
+  "commerce_platform": "marketplace-general",
+  "seller_persona": "synthetic e-commerce presenter",
+  "presenter_script": "",
+  "cta": "",
+  "notes": "Do not include API keys in this file."
+}

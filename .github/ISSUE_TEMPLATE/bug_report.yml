@@ -1,0 +1,42 @@
+name: Bug report
+description: Report a reproducible problem without sharing credentials or customer assets.
+title: "[Bug]: "
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: Do not include API keys, private request IDs, customer images, or paid-provider response data.
+  - type: input
+    id: version
+    attributes:
+      label: Version or commit
+      placeholder: v1.0.0 or commit SHA
+    validations:
+      required: true
+  - type: input
+    id: model_key
+    attributes:
+      label: Model config key
+      placeholder: grok_video_15
+    validations:
+      required: true
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: Describe the expected and actual behavior.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Minimal reproduction
+      description: Use redacted or synthetic assets only.
+    validations:
+      required: true
+  - type: textarea
+    id: validation
+    attributes:
+      label: Validation output
+      description: Include relevant audit, test, or preflight output with secrets removed.
