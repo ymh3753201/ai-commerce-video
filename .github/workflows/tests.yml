@@ -10,15 +10,15 @@ permissions:
 jobs:
   offline-tests:
     runs-on: ubuntu-latest
+    env:
+      PYTHONDONTWRITEBYTECODE: "1"
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Install FFmpeg
         run: sudo apt-get update && sudo apt-get install -y ffmpeg
       - name: Run release audit
         run: python3 scripts/audit_release.py
       - name: Run offline tests
-        env:
-          PYTHONDONTWRITEBYTECODE: "1"
         run: python3 -m unittest discover -s tests -p 'test_*.py'
       - name: Build skill package
         run: python3 scripts/package_skill.py --output dist/ai-commerce-video.skill

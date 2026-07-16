@@ -6,8 +6,11 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import sys
 import zipfile
 from pathlib import Path
+
+sys.dont_write_bytecode = True
 
 from audit_release import audit
 
