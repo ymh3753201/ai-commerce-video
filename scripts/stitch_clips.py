@@ -141,6 +141,14 @@ def main() -> int:
         temp_dir.mkdir(parents=True, exist_ok=True)
         width, height, fps = resolve_target(clips, args.target_resolution, args.target_fps)
         input_summaries = [media_summary(clip) for clip in clips]
+        plan_file = project_dir / "generation-plan.json"
+        planned_stitching = {}
+        if plan_file.is_file():
+            try:
+                plan_data = json.loads(plan_file.read_text(encoding="utf-8"))
+                planned_stitching = plan_data.get("stitching_plan") or {}
+            except json.JSONDecodeError as exc:
+                raise ScriptError(f"Invalid generation-plan.json: {exc}") from exc
         report = {
             "clips": [str(clip) for clip in clips],
             "clip_sha256": [sha256_file(clip) for clip in clips],
@@ -155,6 +163,10 @@ def main() -> int:
             "crossfade_applied": False,
             "intermediate_audio_codec": "pcm_s16le",
             "single_final_aac_encode": True,
+            "editorial_boundary_policy": planned_stitching.get("editorial_boundary_policy") or "review_each_cut_after_a_complete_visible_action",
+            "sound_continuity_policy": planned_stitching.get("sound_continuity_policy") or "restate_full_sonic_fingerprint_per_clip_and_preserve_complete_voice_sentences",
+            "editorial_boundary_review_required": len(clips) > 1,
+            "loudness_consistency_review_required": len(clips) > 1,
         }
         cumulative = 0.0
         boundaries = []
@@ -162,6 +174,13 @@ def main() -> int:
             cumulative += float(summary.get("duration_seconds") or 0)
             boundaries.append(round(cumulative, 3))
         report["boundary_seconds"] = boundaries
+        planned_boundaries = []
+        for index, boundary in enumerate(planned_stitching.get("edit_boundaries") or []):
+            record = dict(boundary) if isinstance(boundary, dict) else {"plan_value": boundary}
+            record["actual_boundary_seconds"] = boundaries[index] if index < len(boundaries) else None
+            record["review_status"] = "pending_human_or_multimodal_review"
+            planned_boundaries.append(record)
+        report["planned_edit_boundaries"] = planned_boundaries
         write_concat_list(concat_list, clips)
         if args.dry_run:
             print(json.dumps({"ok": True, **report}, ensure_ascii=False, indent=2))

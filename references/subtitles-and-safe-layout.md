@@ -20,19 +20,20 @@ An enabled subtitle plan must contain:
 }
 ```
 
-If these fields are absent or changed, stop before generation.
+If these fields are absent or changed, keep subtitles disabled and proceed with the clean video. Stop only before subtitle generation/burning until the subtitle plan is corrected.
 
 ## Local Postproduction Flow
 
 1. Finish and review the clean video first.
 2. Transcribe final audio locally with the configured Whisper executable/model.
-3. Use the confirmed spoken script as the lexical reference when available, but use final audio for timing.
+3. Use the finished video's actual audio transcript for subtitle wording and timing. The planned script is review context only; do not force planned words into captions when the model paraphrased them.
 4. Review names, SKU, price, discount, unit, offer, CTA, and disclaimer text.
 5. Render subtitles with `burn_subtitles.py` into a separate `final.captioned.mp4`.
 6. Preserve `final.mp4` as the clean Provider master.
 7. Review the captioned output and only then finalize delivery.
 
 Subtitle generation and burning are local postproduction operations and must not spend video-generation credits.
+Do not require Whisper, libass, FFmpeg subtitle filters, or an SRT file during paid-video preflight. Check those dependencies only after the clean video exists and only when subtitles were requested.
 
 ## Commerce Caption Style
 

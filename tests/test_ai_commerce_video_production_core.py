@@ -28,15 +28,20 @@ def clean_env() -> dict[str, str]:
     for key in list(env):
         if key in {
             "AI_COMMERCE_VIDEO_API_KEY",
+            "AI_COMMERCE_VIDEO_MIKUAPI_KEY",
+            "AI_COMMERCE_VIDEO_119337_KEY",
             "AI_COMMERCE_VIDEO_BASE_URL",
             "AI_COMMERCE_VIDEO_MODEL",
+            "AI_COMMERCE_VIDEO_PROXY_URL",
             "AI_COMMERCE_VIDEO_ENV_FILE",
             "YUNWU_API_KEY",
             "XAI_API_KEY",
             "FAL_KEY",
-        } or key.startswith("AI_COMMERCE_VIDEO_MODEL_"):
+        } or key.startswith("AI_COMMERCE_VIDEO_MODEL_") or key.startswith("AI_COMMERCE_VIDEO_BASE_URL_"):
             env.pop(key, None)
     env["AI_COMMERCE_VIDEO_ENV_FILE"] = str(ROOT / ".nonexistent-test-env")
+    env["AI_COMMERCE_VIDEO_DISABLE_KEYCHAIN"] = "1"
+    env["PYTHONDONTWRITEBYTECODE"] = "1"
     return env
 
 
@@ -120,6 +125,8 @@ class ProductionCoreTests(unittest.TestCase):
             str(tmp_path / "projects"),
             "--product-image",
             str(product),
+            "--model-key",
+            "grok_video_15",
             "--video-source-image",
             str(product),
             "--duration",
@@ -159,8 +166,8 @@ class ProductionCoreTests(unittest.TestCase):
             self.assertEqual(plan["platform_contract"]["source_reference"], "references/platform-requirements.md")
             model_contract = plan["model_capability_contract"]
             self.assertEqual(model_contract["official_model_family"], "grok-imagine-video-1.5")
-            self.assertEqual(model_contract["provider_model_alias"], "grok-video-1.5")
-            self.assertEqual(model_contract["allowed_duration_seconds"], [4, 6, 8, 10, 12, 15])
+            self.assertEqual(model_contract["provider_model_alias"], "grok-imagine-video-1.5")
+            self.assertEqual(model_contract["allowed_duration_seconds"], list(range(1, 16)))
 
     def test_each_segment_has_unique_script_and_stitch_safe_boundary(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -394,10 +401,30 @@ class ProductionCoreTests(unittest.TestCase):
             self.assertEqual(contract["duration_plan_digest"], plan["duration_plan_digest"])
             self.assertFalse((plan_path.parent / "jobs.json").exists())
 
+    def test_preflight_defers_missing_optional_subtitle_runtime(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            _, plan_path = self.prepare_project(Path(tmp), duration=15, subtitle_choice="enabled")
+            plan = json.loads(plan_path.read_text(encoding="utf-8"))
+            self.assertEqual(plan["subtitle_plan"]["lexical_source"], "final_audio_transcript")
+            plan["subtitle_plan"]["request_source"] = "default"
+            plan["subtitle_plan"]["whisper_executable"] = str(Path(tmp) / "missing-whisper-cli")
+            plan["subtitle_plan"]["whisper_model"] = str(Path(tmp) / "missing-whisper-model.bin")
+            plan_path.write_text(json.dumps(plan, ensure_ascii=False, indent=2), encoding="utf-8")
+            result = run_cmd([
+                "python3", str(SCRIPTS / "preflight_project.py"),
+                "--plan", str(plan_path), "--config", str(CONFIG),
+            ])
+            report = json.loads(result.stdout)
+            self.assertTrue(report["ok"])
+            self.assertTrue(report["paid_generation_allowed"])
+            self.assertTrue(report["subtitle_postproduction_deferred"])
+            self.assertTrue(any("whisper" in item.lower() for item in report["subtitle_postproduction_warnings"]))
+            self.assertTrue(any("request_source" in item for item in report["subtitle_postproduction_warnings"]))
+
     def test_platform_validator_blocks_illegal_slot_and_provider_subtitle_flag(self):
         with tempfile.TemporaryDirectory() as tmp:
             plan, plan_path = self.prepare_project(Path(tmp), duration=15)
-            plan["shots"][0]["duration_seconds"] = 13
+            plan["shots"][0]["duration_seconds"] = 16
             plan["subtitle_plan"]["subtitle_included_in_payload"] = True
             plan_path.write_text(json.dumps(plan, ensure_ascii=False, indent=2), encoding="utf-8")
             result = run_cmd([
@@ -411,7 +438,7 @@ class ProductionCoreTests(unittest.TestCase):
     def test_preflight_itself_blocks_illegal_request_duration(self):
         with tempfile.TemporaryDirectory() as tmp:
             plan, plan_path = self.prepare_project(Path(tmp), duration=15)
-            plan["shots"][0]["duration_seconds"] = 13
+            plan["shots"][0]["duration_seconds"] = 16
             plan_path.write_text(json.dumps(plan, ensure_ascii=False, indent=2), encoding="utf-8")
             result = run_cmd([
                 "python3", str(SCRIPTS / "preflight_project.py"),
@@ -460,8 +487,10 @@ class ProductionCoreTests(unittest.TestCase):
             self.assertTrue(data["ok"])
             confirmation = json.loads((plan_path.parent / "video-confirmation.json").read_text(encoding="utf-8"))
             jobs = json.loads((plan_path.parent / "jobs.json").read_text(encoding="utf-8"))
+            self.assertTrue(confirmation["plan_confirmed"])
             self.assertTrue(confirmation["image_assets_confirmed"])
             self.assertTrue(confirmation["video_generation_confirmed"])
+            self.assertTrue(confirmation["paid_video_authorized"])
             self.assertEqual(confirmation["approved_paid_cap"], 2)
             self.assertEqual(jobs["approved_paid_cap"], 2)
             self.assertEqual(jobs["paid_submission_attempts"], 0)
@@ -481,6 +510,16 @@ class ProductionCoreTests(unittest.TestCase):
 
     def test_workflow_submit_posts_each_shot_at_most_once(self):
         class SubmitHandler(BaseHTTPRequestHandler):
+            def do_GET(self):
+                if self.path != "/v1/models":
+                    self.send_error(404)
+                    return
+                self.server.get_count += 1
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(json.dumps({"data": [{"id": "grok-imagine-video-1.5"}]}).encode("utf-8"))
+
             def do_POST(self):
                 self.server.post_count += 1
                 self.rfile.read(int(self.headers.get("Content-Length", "0")))
@@ -495,6 +534,160 @@ class ProductionCoreTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             tmp_path = Path(tmp)
             server = HTTPServer(("127.0.0.1", 0), SubmitHandler)
+            server.post_count = 0
+            server.get_count = 0
+            thread = threading.Thread(target=server.serve_forever, daemon=True)
+            thread.start()
+            try:
+                config_data = json.loads(CONFIG.read_text(encoding="utf-8"))
+                config_data["models"]["grok_video_15"]["base_url"] = f"http://127.0.0.1:{server.server_port}/v1"
+                config_path = tmp_path / "local-config.json"
+                config_path.write_text(json.dumps(config_data), encoding="utf-8")
+                _, plan_path = self.prepare_project(tmp_path, duration=15)
+                run_cmd([
+                    "python3", str(SCRIPTS / "preflight_project.py"),
+                    "--plan", str(plan_path), "--config", str(config_path),
+                ])
+                run_cmd([
+                    "python3", str(SCRIPTS / "workflow_engine.py"),
+                    "--project-dir", str(plan_path.parent), "confirm", "--approved-by", "offline-test",
+                ])
+                env = {"AI_COMMERCE_VIDEO_MIKUAPI_KEY": "test-key"}
+                first = run_cmd([
+                    "python3", str(SCRIPTS / "workflow_engine.py"),
+                    "--project-dir", str(plan_path.parent), "submit", "--config", str(config_path),
+                ], env=env)
+                self.assertTrue(json.loads(first.stdout)["ok"])
+                plan = json.loads(plan_path.read_text(encoding="utf-8"))
+                request_file = Path(plan["shots"][0]["request_file"])
+                first_request_record = request_file.read_bytes()
+                second = run_cmd([
+                    "python3", str(SCRIPTS / "workflow_engine.py"),
+                    "--project-dir", str(plan_path.parent), "submit", "--config", str(config_path),
+                ], expect_ok=False, env=env)
+                self.assertIn("second paid submission", second.stdout.lower())
+                self.assertEqual(server.post_count, 1)
+                self.assertEqual(server.get_count, 1)
+                self.assertEqual(request_file.read_bytes(), first_request_record)
+            finally:
+                server.shutdown()
+                thread.join(timeout=5)
+                server.server_close()
+
+    def test_direct_manual_confirmation_cannot_bypass_guarded_paid_workflow(self):
+        class CountingHandler(BaseHTTPRequestHandler):
+            def do_POST(self):
+                self.server.post_count += 1
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(json.dumps({"data": {"task_id": "unsafe-request"}}).encode("utf-8"))
+
+            def log_message(self, format, *args):
+                return
+
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            server = HTTPServer(("127.0.0.1", 0), CountingHandler)
+            server.post_count = 0
+            thread = threading.Thread(target=server.serve_forever, daemon=True)
+            thread.start()
+            try:
+                config_data = json.loads(CONFIG.read_text(encoding="utf-8"))
+                config_data["models"]["grok_video_15"]["base_url"] = f"http://127.0.0.1:{server.server_port}/v1"
+                config_path = tmp_path / "local-config.json"
+                config_path.write_text(json.dumps(config_data), encoding="utf-8")
+                _, plan_path = self.prepare_project(tmp_path, duration=15)
+
+                result = run_cmd([
+                    "python3", str(SCRIPTS / "generate_video.py"),
+                    "--plan", str(plan_path),
+                    "--config", str(config_path),
+                    "--confirmed",
+                ], expect_ok=False, env={"AI_COMMERCE_VIDEO_MIKUAPI_KEY": "test-key"})
+
+                self.assertIn("guarded paid workflow", result.stdout.lower())
+                self.assertEqual(server.post_count, 0)
+                self.assertFalse((plan_path.parent / "jobs.json").exists())
+            finally:
+                server.shutdown()
+                thread.join(timeout=5)
+                server.server_close()
+
+    def test_poll_refuses_to_forward_provider_key_to_foreign_response_host(self):
+        class CredentialTrapHandler(BaseHTTPRequestHandler):
+            def do_GET(self):
+                self.server.get_count += 1
+                self.server.authorization = self.headers.get("Authorization")
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(json.dumps({"status": "COMPLETED"}).encode("utf-8"))
+
+            def log_message(self, format, *args):
+                return
+
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            trap = HTTPServer(("127.0.0.1", 0), CredentialTrapHandler)
+            trap.get_count = 0
+            trap.authorization = None
+            thread = threading.Thread(target=trap.serve_forever, daemon=True)
+            thread.start()
+            try:
+                config_data = json.loads(CONFIG.read_text(encoding="utf-8"))
+                config_data["models"]["grok_video_15"]["base_url"] = "http://provider.invalid/v1"
+                config_path = tmp_path / "local-config.json"
+                config_path.write_text(json.dumps(config_data), encoding="utf-8")
+                request_file = tmp_path / "requests" / "shot_01_request.json"
+                request_file.parent.mkdir()
+                request_file.write_text(json.dumps({
+                    "shot_id": "shot_01",
+                    "model_key": "grok_video_15",
+                    "submit_url": "http://provider.invalid/v1/videos/generations",
+                    "response": {
+                        "request_id": "request-1",
+                        "status_url": f"http://127.0.0.1:{trap.server_port}/steal",
+                    },
+                }), encoding="utf-8")
+
+                result = run_cmd([
+                    "python3", str(SCRIPTS / "poll_video.py"),
+                    "--request-file", str(request_file),
+                    "--config", str(config_path),
+                    "--timeout", "1",
+                    "--interval", "0",
+                ], expect_ok=False, env={"AI_COMMERCE_VIDEO_MIKUAPI_KEY": "test-key"})
+
+                self.assertIn("refusing to send provider credentials", result.stdout.lower())
+                self.assertEqual(trap.get_count, 0)
+                self.assertIsNone(trap.authorization)
+            finally:
+                trap.shutdown()
+                thread.join(timeout=5)
+                trap.server_close()
+
+    def test_paid_submit_blocks_network_route_drift_after_readiness(self):
+        class ReadyHandler(BaseHTTPRequestHandler):
+            def do_GET(self):
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(json.dumps({"data": [{"id": "grok-imagine-video-1.5"}]}).encode("utf-8"))
+
+            def do_POST(self):
+                self.server.post_count += 1
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(json.dumps({"request_id": "unexpected"}).encode("utf-8"))
+
+            def log_message(self, format, *args):
+                return
+
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            server = HTTPServer(("127.0.0.1", 0), ReadyHandler)
             server.post_count = 0
             thread = threading.Thread(target=server.serve_forever, daemon=True)
             thread.start()
@@ -512,18 +705,261 @@ class ProductionCoreTests(unittest.TestCase):
                     "python3", str(SCRIPTS / "workflow_engine.py"),
                     "--project-dir", str(plan_path.parent), "confirm", "--approved-by", "offline-test",
                 ])
-                env = {"AI_COMMERCE_VIDEO_API_KEY": "test-key"}
-                first = run_cmd([
-                    "python3", str(SCRIPTS / "workflow_engine.py"),
-                    "--project-dir", str(plan_path.parent), "submit", "--config", str(config_path),
+                env = {"AI_COMMERCE_VIDEO_MIKUAPI_KEY": "test-key"}
+                run_cmd([
+                    "python3", str(SCRIPTS / "check_provider_readiness.py"),
+                    "--project-dir", str(plan_path.parent), "--config", str(config_path),
+                    "--model-key", "grok_video_15",
                 ], env=env)
-                self.assertTrue(json.loads(first.stdout)["ok"])
-                second = run_cmd([
+                result = run_cmd([
+                    "python3", str(SCRIPTS / "generate_video.py"),
+                    "--plan", str(plan_path), "--config", str(config_path),
+                    "--confirmation-file", str(plan_path.parent / "video-confirmation.json"),
+                    "--readiness-file", str(plan_path.parent / "provider-readiness.json"),
+                    "--max-paid-submissions", "1",
+                ], expect_ok=False, env={
+                    **env,
+                    "AI_COMMERCE_VIDEO_PROXY_URL": "http://127.0.0.1:1",
+                })
+                self.assertIn("network route changed", result.stdout.lower())
+                self.assertEqual(server.post_count, 0)
+                jobs = json.loads((plan_path.parent / "jobs.json").read_text(encoding="utf-8"))
+                self.assertEqual(jobs["paid_submission_attempts"], 0)
+            finally:
+                server.shutdown()
+                thread.join(timeout=5)
+                server.server_close()
+
+    def test_workflow_submit_blocks_payload_contract_drift_before_http_post(self):
+        class CountingHandler(BaseHTTPRequestHandler):
+            def do_GET(self):
+                if self.path != "/v1/models":
+                    self.send_error(404)
+                    return
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(json.dumps({"data": [{"id": "grok-imagine-video-1.5"}]}).encode("utf-8"))
+
+            def do_POST(self):
+                self.server.post_count += 1
+                self.send_response(500)
+                self.end_headers()
+
+            def log_message(self, format, *args):
+                return
+
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            server = HTTPServer(("127.0.0.1", 0), CountingHandler)
+            server.post_count = 0
+            thread = threading.Thread(target=server.serve_forever, daemon=True)
+            thread.start()
+            try:
+                config_data = json.loads(CONFIG.read_text(encoding="utf-8"))
+                model = config_data["models"]["grok_video_15"]
+                model["base_url"] = f"http://127.0.0.1:{server.server_port}/v1"
+                config_path = tmp_path / "local-config.json"
+                config_path.write_text(json.dumps(config_data), encoding="utf-8")
+                _, plan_path = self.prepare_project(tmp_path, duration=15)
+                run_cmd([
+                    "python3", str(SCRIPTS / "preflight_project.py"),
+                    "--plan", str(plan_path), "--config", str(config_path),
+                ])
+                run_cmd([
+                    "python3", str(SCRIPTS / "workflow_engine.py"),
+                    "--project-dir", str(plan_path.parent), "confirm", "--approved-by", "offline-test",
+                ])
+
+                model["source_image_field"] = "image_urls"
+                model["source_payload_format"] = "url_array"
+                config_path.write_text(json.dumps(config_data), encoding="utf-8")
+                result = run_cmd([
                     "python3", str(SCRIPTS / "workflow_engine.py"),
                     "--project-dir", str(plan_path.parent), "submit", "--config", str(config_path),
-                ], expect_ok=False, env=env)
-                self.assertIn("second paid submission", second.stdout.lower())
-                self.assertEqual(server.post_count, 1)
+                ], expect_ok=False, env={"AI_COMMERCE_VIDEO_MIKUAPI_KEY": "test-key"})
+                self.assertIn("drifted from preflight", result.stdout.lower())
+                self.assertEqual(server.post_count, 0)
+                jobs = json.loads((plan_path.parent / "jobs.json").read_text(encoding="utf-8"))
+                self.assertEqual(jobs["paid_submission_attempts"], 0)
+            finally:
+                server.shutdown()
+                thread.join(timeout=5)
+                server.server_close()
+
+    def test_workflow_region_403_blocks_before_paid_attempt_and_keeps_confirmation(self):
+        class RegionBlockedHandler(BaseHTTPRequestHandler):
+            def do_GET(self):
+                self.server.get_count += 1
+                self.send_response(403)
+                self.send_header("Content-Type", "text/html; charset=utf-8")
+                self.end_headers()
+                self.wfile.write("<html><title>访问受限</title><body>当前地区暂不提供服务</body></html>".encode("utf-8"))
+
+            def do_POST(self):
+                self.server.post_count += 1
+                self.send_response(500)
+                self.end_headers()
+
+            def log_message(self, format, *args):
+                return
+
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            server = HTTPServer(("127.0.0.1", 0), RegionBlockedHandler)
+            server.get_count = 0
+            server.post_count = 0
+            thread = threading.Thread(target=server.serve_forever, daemon=True)
+            thread.start()
+            try:
+                config_data = json.loads(CONFIG.read_text(encoding="utf-8"))
+                config_data["models"]["grok_video_15"]["base_url"] = f"http://127.0.0.1:{server.server_port}/v1"
+                config_path = tmp_path / "local-config.json"
+                config_path.write_text(json.dumps(config_data), encoding="utf-8")
+                _, plan_path = self.prepare_project(tmp_path, duration=15)
+                run_cmd([
+                    "python3", str(SCRIPTS / "preflight_project.py"),
+                    "--plan", str(plan_path), "--config", str(config_path),
+                ])
+                run_cmd([
+                    "python3", str(SCRIPTS / "workflow_engine.py"),
+                    "--project-dir", str(plan_path.parent), "confirm", "--approved-by", "offline-test",
+                ])
+                result = run_cmd([
+                    "python3", str(SCRIPTS / "workflow_engine.py"),
+                    "--project-dir", str(plan_path.parent), "submit", "--config", str(config_path),
+                ], expect_ok=False, env={"AI_COMMERCE_VIDEO_MIKUAPI_KEY": "test-key"})
+                data = json.loads(result.stdout)
+                self.assertFalse(data["ok"])
+                self.assertEqual(data["stage"], "provider_readiness")
+                self.assertFalse(data["paid_api_call"])
+                self.assertTrue(data["authorization_preserved"])
+                self.assertFalse(data["reconfirmation_required"])
+                self.assertEqual(server.get_count, 1)
+                self.assertEqual(server.post_count, 0)
+                jobs = json.loads((plan_path.parent / "jobs.json").read_text(encoding="utf-8"))
+                self.assertEqual(jobs["paid_submission_attempts"], 0)
+                self.assertTrue((plan_path.parent / "video-confirmation.json").exists())
+                readiness = json.loads((plan_path.parent / "provider-readiness.json").read_text(encoding="utf-8"))
+                self.assertEqual(readiness["status"], "blocked")
+                self.assertEqual(readiness["error_code"], "region_restricted")
+            finally:
+                server.shutdown()
+                thread.join(timeout=5)
+                server.server_close()
+
+    def test_provider_readiness_uses_skill_proxy_without_changing_system_proxy(self):
+        class ProxyHandler(BaseHTTPRequestHandler):
+            def do_GET(self):
+                self.server.get_count += 1
+                self.server.request_path = self.path
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(json.dumps({"data": [{"id": "grok-imagine-video-1.5"}]}).encode("utf-8"))
+
+            def log_message(self, format, *args):
+                return
+
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            server = HTTPServer(("127.0.0.1", 0), ProxyHandler)
+            server.get_count = 0
+            server.request_path = ""
+            thread = threading.Thread(target=server.serve_forever, daemon=True)
+            thread.start()
+            try:
+                config_data = json.loads(CONFIG.read_text(encoding="utf-8"))
+                config_data["models"]["grok_video_15"]["base_url"] = "http://provider.invalid/v1"
+                config_path = tmp_path / "proxy-config.json"
+                config_path.write_text(json.dumps(config_data), encoding="utf-8")
+                project_dir = tmp_path / "project"
+                project_dir.mkdir()
+                result = run_cmd([
+                    "python3", str(SCRIPTS / "check_provider_readiness.py"),
+                    "--project-dir", str(project_dir),
+                    "--config", str(config_path),
+                    "--model-key", "grok_video_15",
+                ], env={
+                    "AI_COMMERCE_VIDEO_MIKUAPI_KEY": "test-key",
+                    "AI_COMMERCE_VIDEO_PROXY_URL": f"http://127.0.0.1:{server.server_port}",
+                })
+                data = json.loads(result.stdout)
+                self.assertTrue(data["ok"])
+                self.assertEqual(data["network_route"]["source"], "AI_COMMERCE_VIDEO_PROXY_URL")
+                self.assertEqual(data["network_route"]["host"], "127.0.0.1")
+                self.assertEqual(data["network_route"]["port"], server.server_port)
+                self.assertNotIn("test-key", result.stdout)
+                self.assertEqual(server.get_count, 1)
+                self.assertIn("provider.invalid/v1/models", server.request_path)
+            finally:
+                server.shutdown()
+                thread.join(timeout=5)
+                server.server_close()
+
+    def test_prompt_native_spoken_readiness_does_not_require_voice_roster(self):
+        class VoiceReadinessHandler(BaseHTTPRequestHandler):
+            def do_GET(self):
+                self.server.request_paths.append(self.path)
+                if self.path == "/v1/models":
+                    payload = {"data": [{"id": "grok-imagine-video-1.5"}]}
+                elif self.path == "/v1/tts/voices":
+                    self.send_error(404)
+                    return
+                else:
+                    self.send_error(404)
+                    return
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(json.dumps(payload).encode("utf-8"))
+
+            def do_POST(self):
+                self.server.post_count += 1
+                self.send_response(500)
+                self.end_headers()
+
+            def log_message(self, format, *args):
+                return
+
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            server = HTTPServer(("127.0.0.1", 0), VoiceReadinessHandler)
+            server.request_paths = []
+            server.post_count = 0
+            thread = threading.Thread(target=server.serve_forever, daemon=True)
+            thread.start()
+            try:
+                config_data = json.loads(CONFIG.read_text(encoding="utf-8"))
+                model = config_data["models"]["grok_video_15_reference"]
+                model["base_url"] = f"http://127.0.0.1:{server.server_port}"
+                model["voices_path"] = "/v1/tts/voices"
+                config_path = tmp_path / "config.json"
+                config_path.write_text(json.dumps(config_data), encoding="utf-8")
+                project_dir = tmp_path / "project"
+                project_dir.mkdir()
+                (project_dir / "generation-plan.json").write_text(json.dumps({
+                    "model_key": "grok_video_15_reference",
+                    "audio_contract": {
+                        "speech_required": True,
+                        "voice_policy": "prompt_native",
+                        "voice_description": "calm premium Mandarin female advertising voice",
+                        "voice_id": "",
+                        "preset_voice_ids": [],
+                    },
+                }), encoding="utf-8")
+
+                result = run_cmd([
+                    "python3", str(SCRIPTS / "check_provider_readiness.py"),
+                    "--project-dir", str(project_dir),
+                    "--config", str(config_path),
+                ], env={"AI_COMMERCE_VIDEO_MIKUAPI_KEY": "test-key"})
+                data = json.loads(result.stdout)
+                self.assertTrue(data["ok"])
+                self.assertEqual(data["speech_readiness_mode"], "prompt_native")
+                self.assertFalse(data["voice_roster_checked"])
+                self.assertEqual(server.request_paths, ["/v1/models"])
+                self.assertEqual(server.post_count, 0)
             finally:
                 server.shutdown()
                 thread.join(timeout=5)
@@ -536,6 +972,21 @@ class ProductionCoreTests(unittest.TestCase):
             clips.mkdir()
             make_test_video(clips / "shot_01.mp4", color="blue", audio=True)
             make_test_video(clips / "shot_02.mp4", size="640x360", fps=30, color="green", audio=True)
+            (project / "generation-plan.json").write_text(json.dumps({
+                "stitching_plan": {
+                    "editorial_boundary_policy": "cut_only_after_complete_visible_action_in_a_stable_exit_state",
+                    "sound_continuity_policy": "carry_ambience_and_score_motif_while_preserving_complete_voice_sentences",
+                    "edit_boundaries": [{
+                        "after_clip": "shot_01",
+                        "before_clip": "shot_02",
+                        "outgoing_exit_state": "stable_edit_safe_state",
+                        "incoming_entry_state": "approved_continuity_state",
+                        "stitch_motivation": "action_complete_match_cut",
+                        "audio_bridge": "carry_ambience_and_score_motif_after_complete_sentence",
+                        "complete_action_boundary_required": True,
+                    }],
+                },
+            }), encoding="utf-8")
             result = run_cmd(
                 [
                     "python3",
@@ -555,6 +1006,10 @@ class ProductionCoreTests(unittest.TestCase):
             self.assertTrue(report["single_final_aac_encode"])
             self.assertEqual(report["intermediate_audio_codec"], "pcm_s16le")
             self.assertEqual(len(report["boundary_seconds"]), 1)
+            self.assertEqual(len(report["planned_edit_boundaries"]), 1)
+            self.assertEqual(report["planned_edit_boundaries"][0]["actual_boundary_seconds"], report["boundary_seconds"][0])
+            self.assertTrue(report["editorial_boundary_review_required"])
+            self.assertTrue(report["loudness_consistency_review_required"])
             self.assertTrue(report["output_sha256"])
 
     def test_review_render_checks_boundaries_and_delivery_hard_limit(self):
@@ -566,11 +1021,16 @@ class ProductionCoreTests(unittest.TestCase):
             second = clips / "shot_02.mp4"
             make_test_video(first, duration=1.0, color="blue", audio=True)
             make_test_video(second, duration=1.0, color="green", audio=True)
+            source = project / "approved-source.png"
+            subprocess.run([
+                "ffmpeg", "-y", "-f", "lavfi", "-i", "color=c=blue:s=320x240:d=0.1",
+                "-frames:v", "1", str(source),
+            ], stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
             plan = {
                 "delivery_max_seconds": 3,
                 "total_duration_seconds": 3,
                 "shots": [
-                    {"id": "shot_01", "clip_file": str(first), "spoken_script": "第一句完成。", "script_boundary": {"stitch_safe": True}},
+                    {"id": "shot_01", "clip_file": str(first), "image": {"value": str(source)}, "spoken_script": "第一句完成。", "script_boundary": {"stitch_safe": True}},
                     {"id": "shot_02", "clip_file": str(second), "spoken_script": "第二句完成。", "script_boundary": {"stitch_safe": True}},
                 ],
                 "stitching_plan": {"required": True},
@@ -588,12 +1048,74 @@ class ProductionCoreTests(unittest.TestCase):
             ])
             report = json.loads(result.stdout)
             self.assertEqual(report["status"], "pass")
+            self.assertEqual(report["review_scope"], "technical_media_only")
+            self.assertEqual(report["technical_status"], "pass")
+            self.assertEqual(report["delivery_status"], "pending_business_review")
+            self.assertFalse(report["formal_delivery_approved"])
+            self.assertIn("sound_signal_screening", report)
+            self.assertFalse(report["sound_signal_screening"]["listening_verdict"])
             self.assertTrue(report["delivery_duration_hard_limit_pass"])
             self.assertEqual(report["boundary_count"], 1)
             self.assertTrue(report["stitch_audio_policy_pass"])
+            self.assertEqual(report["source_frame_comparisons"][0]["status"], "multimodal_review_required")
+            self.assertTrue(Path(report["source_frame_comparisons"][0]["video_first_frame"]).is_file())
+            self.assertTrue(Path(report["source_frame_comparisons"][0]["comparison_image"]).is_file())
+            self.assertIn("source_frame_consistency", report["visual_review_fields"])
             self.assertTrue((project / "final-review.json").exists())
 
-    def test_finalize_blocks_generated_text_and_product_identity_drift(self):
+    def test_project_stage_does_not_call_technical_media_verification_final(self):
+        workflow_engine = importlib.import_module("workflow_engine")
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp)
+            jobs = {"jobs": {"shot_01": {"state": "verified", "verification_scope": "technical_media_only"}}}
+            (project / "jobs.json").write_text(json.dumps(jobs), encoding="utf-8")
+            self.assertEqual(workflow_engine.project_stage(project)["stage"], "awaiting_business_review")
+            (project / "final-review.json").write_text(json.dumps({"status": "pass"}), encoding="utf-8")
+            (project / "visual-review.json").write_text(json.dumps({"status": "pass"}), encoding="utf-8")
+            self.assertEqual(workflow_engine.project_stage(project)["stage"], "awaiting_business_review")
+            technical = {"status": "pass", "delivery_duration_hard_limit_pass": True, "video_sha256": "hash"}
+            visual = {
+                "status": "pass",
+                "video_sha256": "hash",
+                "video_complete_and_coherent": True,
+                "source_frame_consistency": True,
+                "approved_product_identity": True,
+                "presenter_identity_consistency": True,
+                "presenter_outfit_consistency": True,
+                "scene_composition_consistency": True,
+                "speech_intelligible": True,
+                "speech_meaning_preserved": True,
+            }
+            (project / "final-review.json").write_text(json.dumps(technical), encoding="utf-8")
+            (project / "visual-review.json").write_text(json.dumps(visual), encoding="utf-8")
+            self.assertEqual(workflow_engine.project_stage(project)["stage"], "ready_to_finalize")
+
+    def test_provider_trace_prefers_nested_upstream_task_and_supports_legacy_requests(self):
+        poll_video = importlib.import_module("poll_video")
+        prompt = "approved product and presenter in the confirmed interior scene"
+        request = {
+            "response": {"request_id": "task_gateway"},
+            "payload": {"prompt": prompt, "image_urls": ["data:image/png;base64,bGVnYWN5"]},
+        }
+        response = {
+            "data": {
+                "id": 92430,
+                "task_id": "task_gateway",
+                "channel_id": 11,
+                "prompt": prompt,
+                "data": {"id": "task_upstream"},
+            }
+        }
+        trace = poll_video.build_provider_trace(request, response, "https://example.com/result.mp4")
+        self.assertEqual(trace["gateway_task_id"], "task_gateway")
+        self.assertEqual(trace["gateway_record_id"], 92430)
+        self.assertEqual(trace["upstream_task_id"], "task_upstream")
+        self.assertEqual(trace["channel_id"], 11)
+        self.assertTrue(trace["returned_prompt_matches_request"])
+        self.assertEqual(len(trace["sent_image_sha256"]), 1)
+        self.assertEqual(len(trace["sent_image_sha256"][0]), 64)
+
+    def test_finalize_blocks_incoherent_video_and_reference_identity_drift(self):
         finalize = importlib.import_module("finalize_project")
         plan = {
             "shots": [{"id": "shot_01"}],
@@ -607,16 +1129,20 @@ class ProductionCoreTests(unittest.TestCase):
         technical = {"status": "pass", "delivery_duration_hard_limit_pass": True}
         visual = {
             "status": "blocked",
+            "video_complete_and_coherent": False,
+            "source_frame_consistency": False,
             "approved_product_identity": False,
-            "approved_product_text_integrity": True,
-            "no_generated_text": False,
-            "no_unapproved_visual_insert": True,
-            "spoken_content_complete": True,
-            "critical_facts_exact": True,
+            "presenter_identity_consistency": False,
+            "presenter_outfit_consistency": True,
+            "scene_composition_consistency": True,
+            "speech_intelligible": True,
+            "speech_meaning_preserved": True,
         }
         errors = finalize.delivery_errors(plan, jobs, technical, visual, None)
         self.assertTrue(any("product identity" in item.lower() for item in errors))
-        self.assertTrue(any("generated text" in item.lower() for item in errors))
+        self.assertTrue(any("reference frame" in item.lower() for item in errors))
+        self.assertTrue(any("complete video" in item.lower() for item in errors))
+        self.assertFalse(any("generated text" in item.lower() for item in errors))
 
     def test_finalize_requires_caption_review_when_subtitles_enabled(self):
         finalize = importlib.import_module("finalize_project")
@@ -639,12 +1165,14 @@ class ProductionCoreTests(unittest.TestCase):
         technical = {"status": "pass", "delivery_duration_hard_limit_pass": True}
         clean_visual = {
             "status": "pass",
+            "video_complete_and_coherent": True,
+            "source_frame_consistency": True,
             "approved_product_identity": True,
-            "approved_product_text_integrity": True,
-            "no_generated_text": True,
-            "no_unapproved_visual_insert": True,
-            "spoken_content_complete": True,
-            "critical_facts_exact": True,
+            "presenter_identity_consistency": True,
+            "presenter_outfit_consistency": True,
+            "scene_composition_consistency": True,
+            "speech_intelligible": True,
+            "speech_meaning_preserved": True,
         }
         errors = finalize.delivery_errors(plan, jobs, technical, clean_visual, None)
         self.assertTrue(any("caption" in item.lower() for item in errors))
@@ -668,12 +1196,14 @@ class ProductionCoreTests(unittest.TestCase):
         technical = {"status": "pass", "delivery_duration_hard_limit_pass": True}
         clean_visual = {
             "status": "pass",
+            "video_complete_and_coherent": True,
+            "source_frame_consistency": True,
             "approved_product_identity": True,
-            "approved_product_text_integrity": True,
-            "no_generated_text": True,
-            "no_unapproved_visual_insert": True,
-            "spoken_content_complete": True,
-            "critical_facts_exact": True,
+            "presenter_identity_consistency": True,
+            "presenter_outfit_consistency": True,
+            "scene_composition_consistency": True,
+            "speech_intelligible": True,
+            "speech_meaning_preserved": True,
         }
         self.assertEqual(finalize.delivery_errors(plan, jobs, technical, clean_visual, None), [])
         bound_technical = {**technical, "video_sha256": "clean-hash"}
@@ -745,12 +1275,14 @@ class ProductionCoreTests(unittest.TestCase):
             technical = {"status": "pass", "delivery_duration_hard_limit_pass": True}
             visual = {
                 "status": "pass",
+                "video_complete_and_coherent": True,
+                "source_frame_consistency": True,
                 "approved_product_identity": True,
-                "approved_product_text_integrity": True,
-                "no_generated_text": True,
-                "no_unapproved_visual_insert": True,
-                "spoken_content_complete": True,
-                "critical_facts_exact": True,
+                "presenter_identity_consistency": True,
+                "presenter_outfit_consistency": True,
+                "scene_composition_consistency": True,
+                "speech_intelligible": True,
+                "speech_meaning_preserved": True,
             }
             video_hash = importlib.import_module("_common").sha256_file(final_video)
             technical["video_sha256"] = video_hash

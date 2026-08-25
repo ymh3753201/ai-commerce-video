@@ -4,7 +4,7 @@
     {
       "id": 1,
       "prompt": "我只有一张女士秋冬针织半身裙商品图，想做 15 秒小红书种草视频，偏真实买家体验，不要太硬广。请先给我完整方案，不要直接调用视频 API。",
-      "expected_output": "Should analyze the product, choose and fully design a Xiaohongshu lifestyle/UGC recommendation, show one concise alternative, include image-generation plan, platform/safe-zone/compliance notes, and stop before image/video generation.",
+      "expected_output": "Should analyze the product, show one concise Xiaohongshu lifestyle/UGC recommendation plus one short alternative and image plan, keep detailed platform/safe-zone/compliance contracts in the project file, and stop before image/video generation.",
       "files": []
     },
     {
@@ -15,20 +15,20 @@
     },
     {
       "id": 3,
-      "prompt": "这个电动沙发有商品图、模特图和 3 张场景参考图，想做 TikTok + Meta Reels 两个平台的批量测试，分别测 UGC、对比测试和高端品牌感三个版本，最后再决定生成哪几个视频。",
+      "prompt": "这款护肤套装有商品图、模特图和 3 张场景参考图，想做 TikTok + Meta Reels 两个平台的批量测试，分别测 UGC、对比测试和高端品牌感三个版本，最后再决定生成哪几个视频。",
       "expected_output": "Should propose a creative matrix across platform, variant, hook, CTA, offer, ratio, and reference strategy; should respect multi-reference/model limits and ask for selection before imagegen or paid API.",
       "files": []
     },
     {
       "id": 4,
       "prompt": "我只给你这一张保温杯商品图，帮我做一个 25 秒抖音带货视频，要数字人口播。其余你作为广告策划自动设计，但先不要花钱生成。",
-      "expected_output": "Should use Codex multimodal product analysis, provide a professional platform-aware proposal, split the approved script into legal 15s+10s complete-sentence segments, show two paid base requests with zero automatic repair reserve, and stop at no-cost preflight before paid generation.",
+      "expected_output": "Should use the same category-agnostic product director profile and Codex multimodal analysis, provide a professional platform-aware proposal, plan the default MikuAPI R2V delivery as reliable 10s+10s+5s requests, allocate every complete semantic beat and script sentence to only one clip, show three paid base requests with zero automatic repair reserve, and stop before paid generation.",
       "files": []
     },
     {
       "id": 5,
       "prompt": "做 30 秒 TikTok Shop 带货视频并加中文字幕，视频模型直接把字幕生成在画面里，省得后期剪辑。",
-      "expected_output": "Should refuse only the Provider-rendered subtitle method, keep clean Provider frames, plan legal 15s+15s requests, require explicit subtitle confirmation, and use local transcription/review/burn after the clean video is accepted.",
+      "expected_output": "Should refuse only the Provider-rendered subtitle method, keep clean Provider frames, plan the default MikuAPI R2V delivery as three reliable 10-second requests unless another route is explicitly selected, include the local-subtitle choice and exact paid count in Stage 2 authorization, and use local transcription/review/burn after the clean video is accepted.",
       "files": []
     },
     {
@@ -40,7 +40,97 @@
     {
       "id": 7,
       "prompt": "两段 Grok 视频已经生成，帮我拼成完整带货视频，口播中间不能有爆音或断字，完成后直接说交付成功。",
-      "expected_output": "Should verify both clips and complete-sentence boundaries, stitch with PCM intermediates, no fades/crossfades and one final AAC encode, run clean technical and multimodal business review, and only claim delivery after finalization writes a passing delivery manifest.",
+      "expected_output": "Should verify both clips, complete visible-action exits/entries and complete-sentence boundaries, stitch with PCM intermediates, no fades/crossfades and one final AAC encode, review the planned ambience/score bridge and loudness consistency, run clean technical and multimodal business review, and only claim delivery after finalization writes a passing delivery manifest.",
+      "files": []
+    },
+    {
+      "id": 8,
+      "prompt": "我确认的商品和人物首图没有错，请求记录里的提示词也正确，但下载的视频内容与商品、人物和场景完全无关。不要自动重试，请判断是本地 Skill 还是视频供应商问题。",
+      "expected_output": "Should compare outbound prompt/payload/image fingerprints, gateway and upstream task IDs, channel ID, returned prompt and image-receipt status, then inspect source-versus-first-frame evidence. If local evidence matches and the upstream provides no matching image receipt, it should classify probable gateway/upstream binding or result-mapping failure, block delivery, preserve evidence for compensation, and not buy a retry.",
+      "files": []
+    },
+    {
+      "id": 9,
+      "prompt": "我有一张冲泡饮品包装图，想做 15 秒抖音带货视频，要展示真实冲泡和液体流动，不能虚构健康功效。先给方案，不要调用付费接口。",
+      "expected_output": "Should use the shared commerce architecture, select liquid-food motion, keep pouring and steam natural, avoid unsupported health effects without creating a compliance hard gate, prepare approximate selling speech and a source-frame plan, and stop before paid generation.",
+      "files": []
+    },
+    {
+      "id": 10,
+      "prompt": "我要为一款 SaaS 软件做 15 秒 YouTube Shorts 转化视频，素材是实际界面截图。不要生成人物替换界面，也不要让视频模型生成 UI 文字或字幕。",
+      "expected_output": "Should keep the real UI screenshot as evidence during planning, select software-screen motion and voiceover, and choose an explicit single-image or per-segment Image-to-Video route when exact interface pixels are required. It should preserve interface identity, forbid newly generated UI text or subtitles, disclose the non-default route in Stage 1, then ask once for Stage 2 authorization after the actual source frames and paid count are visible; it must not quietly upload the raw screenshot as a default R2V reference.",
+      "files": []
+    },
+    {
+      "id": 11,
+      "prompt": "我已经看过最终首帧，确认使用这张图，然后直接生成视频。口播按你推荐的大意即可，不要再让我分别确认口播、预检和付费。",
+      "expected_output": "Should treat the clear direct-generation instruction as Stage 2 authorization only when the user is viewing the exact final ordered references, prompt meaning, subtitle choice, and displayed paid cap; should then run guarded confirm and submit without extra micro-confirmations, submit every planned shot at most once, and never retry automatically.",
+      "files": []
+    },
+    {
+      "id": 12,
+      "prompt": "我已经确认并授权生成，但提交前检查返回当前地区不可用。不要改我的 Clash 配置；网络恢复后直接继续，也不要让我重新确认。",
+      "expected_output": "Should use the same-route no-cost Provider readiness check before any generation POST, create no paid attempt or video task on a regional 403, preserve the existing confirmation and paid cap, avoid changing Clash or system proxy settings, and rerun submit without reconfirmation after connectivity recovers unless the visible production contract changed.",
+      "files": []
+    },
+    {
+      "id": 13,
+      "prompt": "我给你一张香水商品图，请用 grok-imagine-video-1.5 的多参考图能力做 15 秒高端带货广告。先让我看专业视觉方案、脚本、每张图片提示词和视频提示词；我同意后再生成参考图，最后确认后调用 API。",
+      "expected_output": "Should use the default MikuAPI-relayed grok-imagine-video-1.5 reference-to-video contract, keep the supplied perfume original in input_evidence_assets only, establish the universal product director profile, commercial proposition and explicit talent contract, then regenerate IMAGE_0 as a faithful professional product master followed preferably by Hook and Proof/Payoff full-screen keyframes. director-commerce-v8 should allocate complete motivated beats into the reliable 10+5 request plan without duplicating one action across clips, render each action-synchronized sound cue beside its beat, and give every independent request a self-contained AUDIO contract with dialogue/VO, natural-language voice direction, sonic idea, signature SFX, ambience, score and mix without same-as-previous shorthand. It should generate no references before approval, keep storyboard grids review-only, send no reference_audios unless the user explicitly requests a preset voice, and show the configured zero-based route order plus exact two paid requests in Stage 2; raw REST must use reference_images and must not include image.",
+      "files": []
+    },
+    {
+      "id": 14,
+      "prompt": "我提供了一张白底商品主图和一张真实手提图。请做 15 秒多参考图带货广告：商品主图必须锁定商品身份，真实手提图只供你分析；先根据商品分析、视觉方案和分镜生成后续专业参考图，分镜图如何使用也要按 grok-imagine-video-1.5 的能力决定。",
+      "expected_output": "Should keep every uploaded product and real-use image in input_evidence_assets only, classify both trustworthy same-SKU views into one ordered product_identity_evidence set even when the real-use photo also has a model/context role, and pass that complete set together to every product-dependent imagegen call. It should design and obtain Stage 1 approval before reference generation, regenerate IMAGE_0 as a faithful professional product master plus only necessary presenter/scene/hand/detail/style controls or clean full-frame beat keyframes, record the actual ordered imagegen input IDs/paths/hashes, concrete fact IDs, observed mechanisms and passing multimodal QC, map flexible time-coded beats into the current MikuAPI 10+5 request plan with one camera move per beat, keep storyboard/contact-sheet grids in approval_preview_assets, and use compiler-owned canonical IMAGE token mapping.",
+      "files": []
+    },
+    {
+      "id": 15,
+      "prompt": "我只有一张普通商品图，不知道怎么写卖点、分镜、人物和声音。请你自动做成一条有商业广告质感的 15 秒带货大片，先给方案，不要调用付费接口。商品图里没有看到滴管、泵头或其他配件。",
+      "expected_output": "Should infer one category-agnostic product director profile plus a commercial proposition, audience tension, truthful visual proof, big idea, emotional arc, talent purpose and layered sound strategy without demanding a long marketing form. It should keep the upload as evidence only, propose a faithful product master plus Hook and Proof/Payoff full-screen keyframes, forbid unsupported droppers, pumps, applicators or mechanisms, design duration-appropriate complete semantic beats with timed sound cues, and stop at Stage 1 with no paid call.",
+      "files": []
+    },
+    {
+      "id": 16,
+      "prompt": "这条 LA MER 高端护肤广告计划有中文旁白，但成片只有音乐和听不懂的人声；Provider 实际只返回约 10 秒，却补静帧做成 15 秒。不要自动重新花钱，请审查是否可以交付。",
+      "expected_output": "Should distinguish AAC audio-track presence from intelligible speech, require local transcription or human listening for planned speech, mark speech_intelligible=false or speech_meaning_preserved=false as blocked, reject a duration shortfall over one second and long static padding, preserve the one-submit ledger, create no delivery manifest, and make no paid retry without new authorization.",
+      "files": []
+    },
+    {
+      "id": 17,
+      "prompt": "方案写的是不出镜、女性普通话高级旁白，但生成结果听起来像男声；同时我要求 15 秒，MikuAPI 实际只返回约 10 秒。请判断是提示词问题还是模型问题，并优化 Skill，不要重新付费。",
+      "expected_output": "Should inspect the frozen strategy, exact outbound prompt, request payload and returned media before assigning blame. It should distinguish visible talent from voice gender, confirm whether any person actually appears, identify any lost female voice direction or contradictory generic talent sentence as a local compiler defect, preserve an explicit no-human directive and female voice description, block voice-gender drift at delivery, recognize that the payload requested 15 seconds while the relay returned about 10 seconds, plan future MikuAPI 15-second deliveries as 10+5 with two approved requests, preserve the old paid ledger, and make no paid retry.",
+      "files": []
+    },
+    {
+      "id": 18,
+      "prompt": "这条法拉利夜间出发广告的视频有清楚旁白，但没有方案里写的引擎声、脚步、城市环境声或背景配乐。请审查 Skill 并优化，不要重新付费生成。",
+      "expected_output": "Should inspect the saved sound intent, per-clip AUDIO blocks and final media before assigning blame; distinguish an AAC stream and intelligible voice from audible non-speech sound design; identify any default Music=no music, vague untimed SFX/ambience labels, or missing sound-layer acceptance as local architecture defects; create an explicit layered_native or intentional ambience_led contract with action-synced SFX, continuous ambience, original no-vocal music policy and clear mix direction; require human or multimodal listening for planned layers; block formal delivery when required sound is absent; preserve the paid ledger and make no paid retry.",
+      "files": []
+    },
+    {
+      "id": 19,
+      "prompt": "请证明这个 Skill 不是只会做美妆或汽车：我可能上传服装、家具、食品、宠物用品、厨房电器、软件界面或一个无法确定品类的商品单图。普通用户都只提供商品图和一句‘做 15 秒商业广告’，先给方案，不要付费生成。",
+      "expected_output": "Should run every item through the same evidence-driven universal product director profile and director-commerce-v8/universal-product-director-v4 architecture rather than category-keyword prompt templates. It should adapt only structured product form, interaction, proof and talent-value dimensions; infer one truthful commercial proposition, 1-4 duration-appropriate complete beats, the smallest generated Reference Pack, and a sonic idea with timed visible-action cues; keep all raw uploads in evidence, show the route-aware paid topology, and stop at Stage 1 with no paid call.",
+      "files": []
+    },
+    {
+      "id": 20,
+      "prompt": "这个广告想做一个不中断的高级产品长镜头；如果路线需要拆成两次生成，不要假装可以无缝连续，也不要把同一个开盖动作拆在两个片段里。请先设计方案。",
+      "expected_output": "Should choose continuous_sequence only when the whole action fits one verified Provider request. If the selected route requires multiple requests, it should explain that independent generations use commercial_montage planned edits, allocate every complete action to one clip, record stable exit and entry states plus cut motivation and audio bridge, disclose the exact paid count, and avoid promising a seamless one-take.",
+      "files": []
+    },
+    {
+      "id": 21,
+      "prompt": "这条黑白运动鞋 15 秒广告计划里有人声、脚步音、空间环境声和背景音乐，但成片听起来只有人声。请判断是模型还是 Skill 的问题，优化后不要自动重新付费。",
+      "expected_output": "Should inspect the frozen plan, exact per-clip prompts, outbound payloads, Provider prompt receipt evidence, source clips and stitched master before assigning sole blame. It should identify any lost clip SFX, end-loaded AUDIO direction or cross-request wording such as same as previous as local architecture defects, while disclosing that native sound generation is Provider best-effort and an unverified returned prompt prevents proving relay versus upstream non-adherence. director-commerce-v8 should place complete sound-on-action cues beside every visible beat, preserve the clip signature SFX, restate ambience/music/mix independently in every paid request, reject cross-clip shorthand during preflight, distinguish technical media pass from formal delivery, require listening for SFX/ambience/music/mix, preserve the paid ledger, and make no paid retry.",
+      "files": []
+    },
+    {
+      "id": 22,
+      "prompt": "我上传了同一件商品的正面、背面和模特实穿图，还上传了一张纯场景灵感图。生成商品主控图、模特图和广告关键帧时请保持商品完全一致，但不要把无关图片全塞给图片模型。先生成参考图，不要调用付费视频。",
+      "expected_output": "Should classify the three trustworthy same-SKU views into one ordered product_identity_evidence set, keep the scene image outside that set, and use the complete product set together for every imagegen output that contains or depends on the product. It should append the scene only to a control that actually needs that setting, preserve dual-role worn-product evidence, record ordered generation input asset IDs/paths/hashes and QC against the same set, block Stage 2 if any product view is omitted, add no new approval step, and make no paid video request.",
       "files": []
     }
   ]

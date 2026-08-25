@@ -12,6 +12,8 @@ from pathlib import Path
 
 from _common import ScriptError, canonical_digest, load_json
 from _workflow import atomic_write_json, load_or_create_jobs, pollable_request_id, transition_job
+from finalize_project import CAPTION_VISUAL_FIELDS
+from review_render import planned_visual_review_fields
 
 
 SCRIPT_DIR = Path(__file__).resolve().parent
@@ -41,13 +43,50 @@ def project_stage(project_dir: Path) -> dict:
     confirmation = project_dir / "video-confirmation.json"
     preflight = project_dir / "preflight-report.json"
     plan = project_dir / "generation-plan.json"
+    def reviews_ready() -> bool:
+        plan_data = load_json(plan) if plan.exists() else {}
+        subtitles_enabled = bool((plan_data.get("subtitle_plan") or {}).get("enabled"))
+        technical_path = project_dir / ("final-review.clean.json" if subtitles_enabled else "final-review.json")
+        clean_visual_path = project_dir / ("visual-review.clean.json" if subtitles_enabled else "visual-review.json")
+        if not technical_path.exists() or not clean_visual_path.exists():
+            return False
+        technical = load_json(technical_path)
+        visual = load_json(clean_visual_path)
+        clean_hash = str(technical.get("video_sha256") or "")
+        if (
+            technical.get("status") != "pass"
+            or technical.get("delivery_duration_hard_limit_pass") is not True
+            or not clean_hash
+            or visual.get("status") not in {"pass", "pass_with_notes"}
+            or visual.get("video_sha256") != clean_hash
+            or any(visual.get(field) is not True for field in planned_visual_review_fields(plan_data))
+        ):
+            return False
+        if subtitles_enabled:
+            caption_path = project_dir / "visual-review.json"
+            if not caption_path.exists():
+                return False
+            caption = load_json(caption_path)
+            if (
+                caption.get("status") not in {"pass", "pass_with_notes"}
+                or not caption.get("video_sha256")
+                or any(caption.get(field) is not True for field in CAPTION_VISUAL_FIELDS)
+            ):
+                return False
+        return True
     if delivery.exists() and load_json(delivery).get("status") == "pass":
         stage = "delivered"
     elif finalize.exists() and load_json(finalize).get("status") == "blocked":
         stage = "blocked"
     elif jobs_path.exists():
         states = [item.get("state") for item in (load_json(jobs_path).get("jobs") or {}).values()]
-        stage = "ready_to_finalize" if states and all(item == "verified" for item in states) else "generating"
+        technically_verified = bool(states and all(item == "verified" for item in states))
+        if technically_verified and reviews_ready():
+            stage = "ready_to_finalize"
+        elif technically_verified:
+            stage = "awaiting_business_review"
+        else:
+            stage = "generating"
     elif confirmation.exists():
         stage = "confirmed"
     elif preflight.exists() and load_json(preflight).get("ok"):
@@ -128,7 +167,7 @@ def poll_jobs(project_dir: Path, timeout: int, interval: int, require_audio: boo
         if job.get("state") not in {"submitted", "polling", "blocked"} or not job.get("request_id"):
             continue
         pollable_request_id(ledger, shot_id)
-        if job.get("state") == "submitted":
+        if job.get("state") in {"submitted", "blocked"}:
             transition_job(project_dir, ledger, shot_id, "polling")
         command = [
             sys.executable,
@@ -150,10 +189,27 @@ def poll_jobs(project_dir: Path, timeout: int, interval: int, require_audio: boo
                 shot_id,
                 "downloaded",
                 clip_file=data.get("output") or job.get("clip_file"),
+                last_error="",
             )
-            transition_job(project_dir, ledger, shot_id, "verified")
+            transition_job(
+                project_dir,
+                ledger,
+                shot_id,
+                "verified",
+                verification_scope="technical_media_only",
+                business_review_required=True,
+            )
         else:
-            transition_job(project_dir, ledger, shot_id, "blocked", last_error=data.get("error") or data)
+            transition_job(
+                project_dir,
+                ledger,
+                shot_id,
+                "blocked",
+                clip_file=data.get("output") or job.get("clip_file"),
+                last_error=data.get("error") or data,
+                failure_code=data.get("error_code") or "provider_poll_failed",
+                automatic_paid_retry=False,
+            )
             failed = True
         results.append({"shot_id": shot_id, "code": code, "result": data})
     return (1 if failed else 0), {"ok": not failed, "results": results, "automatic_paid_repairs": []}
@@ -198,21 +254,59 @@ def main() -> int:
         elif args.command == "submit":
             plan = load_json(plan_path)
             paid_cap = int((plan.get("production_contract") or {}).get("approved_paid_cap") or 0)
-            command = [
-                sys.executable,
-                str(SCRIPT_DIR / "generate_video.py"),
-                "--plan",
-                str(plan_path),
-                "--confirmation-file",
-                str(project_dir / "video-confirmation.json"),
-                "--max-paid-submissions",
-                str(paid_cap),
-            ]
-            if args.config:
-                command.extend(["--config", args.config])
-            if args.shot_id:
-                command.extend(["--shot-id", args.shot_id])
-            code, data = run_worker(command)
+            confirmation_path = project_dir / "video-confirmation.json"
+            if not confirmation_path.exists():
+                raise ScriptError("Run confirm before submit so the existing user authorization is stored in the project")
+            jobs_path = project_dir / "jobs.json"
+            jobs = load_json(jobs_path) if jobs_path.exists() else {}
+            prior_attempts = int(jobs.get("paid_submission_attempts") or 0)
+            readiness = None
+            code = 0
+            if prior_attempts == 0:
+                readiness_command = [
+                    sys.executable,
+                    str(SCRIPT_DIR / "check_provider_readiness.py"),
+                    "--project-dir",
+                    str(project_dir),
+                    "--model-key",
+                    str(plan.get("model_key") or ""),
+                ]
+                if args.config:
+                    readiness_command.extend(["--config", args.config])
+                readiness_code, readiness = run_worker(readiness_command)
+                if readiness_code != 0:
+                    data = {
+                        "ok": False,
+                        "stage": "provider_readiness",
+                        "error": readiness.get("error") or "Provider readiness check failed before paid submission",
+                        "error_code": readiness.get("error_code") or "provider_readiness_failed",
+                        "paid_api_call": False,
+                        "provider_generation_post_attempted": False,
+                        "authorization_preserved": True,
+                        "reconfirmation_required": False,
+                        "provider_readiness": readiness,
+                    }
+                    code = 1
+            if code == 0:
+                command = [
+                    sys.executable,
+                    str(SCRIPT_DIR / "generate_video.py"),
+                    "--plan",
+                    str(plan_path),
+                    "--confirmation-file",
+                    str(confirmation_path),
+                    "--readiness-file",
+                    str(project_dir / "provider-readiness.json"),
+                    "--max-paid-submissions",
+                    str(paid_cap),
+                ]
+                if args.config:
+                    command.extend(["--config", args.config])
+                if args.shot_id:
+                    command.extend(["--shot-id", args.shot_id])
+                code, data = run_worker(command)
+                if readiness is not None:
+                    data["provider_readiness"] = readiness
         elif args.command in {"poll", "resume"}:
             plan = load_json(plan_path)
             require_audio = bool(args.require_audio or plan_requires_audio(plan))

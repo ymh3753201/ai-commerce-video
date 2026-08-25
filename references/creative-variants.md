@@ -1,6 +1,6 @@
 # Creative Variants
 
-Use creative variants to keep the first proposal from becoming one-dimensional. If the user does not specify an ad style, present several practical options before image generation, then include one AI recommendation and the reason.
+Use creative variants as an internal decision framework so the ordinary user does not need to choose among production jargon. If the user does not specify an ad style, select one AI recommendation and keep one concise alternative as an optional revision direction. Present a larger matrix only when the user explicitly requests A/B or batch selection.
 
 ## Variant IDs
 
@@ -26,7 +26,7 @@ Use for Taobao, Amazon, cross-border marketplaces, product detail pages, paid co
 - Storyboard logic: keep the product clear in every major shot; use close-ups, hand demonstration, presenter-to-camera selling, before/after use, and readable captions.
 - Copy style: direct, confident, easy to understand; emphasize function, material, price, use case, buying reason, and CTA.
 - Risk control: do not overpromise medical, financial, safety, or impossible effects.
-- Image needs: product hero still, presenter/model with product, product-detail or usage-scene reference, final `video_source` for single-image models.
+- Image needs: supplied product identity plus only the presenter, product-detail, wardrobe, scene, style, or storyboard references that materially improve control; legacy single-image routes still need a final `video_source`.
 
 ## `story_reversal`
 
@@ -128,14 +128,13 @@ Use for people who may already know or have viewed the product.
 - Risk control: offers, discounts, and countdowns must be accurate.
 - Image needs: product hero, offer caption, trust proof, landing/checkout context.
 
-## First Proposal Requirements
+## User-Facing Selection Rules
 
-When the user has not selected a style, present:
+For the normal fast path:
 
-1. `方案 A: commerce_direct`.
-2. `方案 B: story_reversal`.
-3. At least two additional options selected from `ugc_review`, `comparison_test`, `lifestyle_seed`, `premium_brand`, `feature_demo`, `unboxing`, `live_shopping_teaser`, or `retargeting_offer`, based on product, platform, and campaign goal.
-4. AI recommendation and reason, based on product category, platform, available assets, duration, compliance risk, and model capability.
-5. Clear next action: user may reply with a plan label, `两个融合`, or `按 AI 推荐`.
+1. Select one production-ready recommendation based on product category, platform, available assets, duration, compliance risk, and model capability.
+2. Show only a short optional alternative when it would help the user revise the direction.
+3. Prepare the actual video-facing assets and no-cost preflight without an extra variant-selection confirmation.
+4. Ask once for `确认并生成` after the final images and paid request count are visible.
 
-Only after the user selects and confirms a variant may Codex generate approval images with imagegen/image2.
+If the user asks for plan-only, A/B testing, batch variants, or review-first work, show the requested options and stop before the boundary they set. `按 AI 推荐继续准备` selects the recommendation but is not paid-generation authorization; the later final `确认并生成` remains the single combined production confirmation.

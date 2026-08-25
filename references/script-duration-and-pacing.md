@@ -8,19 +8,21 @@ The delivery duration and the Provider request duration are different:
 
 - `delivery_max_seconds` is the final business requirement.
 - Each paid request must use one value from the selected model's `allowed_duration_seconds`.
-- For the configured Grok 1.5 route, the legal slots are `4, 6, 8, 10, 12, 15` seconds.
-- Prefer the minimum paid request count. Use an exact sum when possible; otherwise use the smallest legal overshoot and trim only a verified idle tail locally.
+- Read legal slots and the reliable planning ceiling from the selected model key. Do not copy one route's duration table to another route.
+- Official xAI Grok Imagine Video 1.5 documents 1–15 seconds. The current MikuAPI R2V adapter accepts those request values, but two observed 15-second requests returned about 10.042 seconds, so its production planning ceiling is 10 seconds until the relay proves otherwise.
+- Prefer the minimum paid request count that stays inside the route's reliable ceiling and sums exactly to the delivery. Trim only a verified idle tail when an exact legal sum is impossible.
 
 Examples:
 
-| Delivery target | Paid request plan | Notes |
-|---:|---|---|
-| 15s | `15` | One request |
-| 25s | `15 + 10` | Two requests, exact |
-| 30s | `15 + 15` | Two requests, exact |
-| 45s | `15 + 15 + 15` | Three requests, exact |
+| Route / delivery | Paid request plan | Notes |
+|---|---:|---|
+| MikuAPI R2V / 15s | `10 + 5` | Two reliable route slots, exact |
+| MikuAPI R2V / 25s | `10 + 10 + 5` | Three reliable route slots, exact |
+| Official xAI R2V / 15s | `15` | One documented slot; still requires route preflight |
+| Official xAI R2V / 25s | `15 + 10` | Two requests, exact |
+| Official xAI R2V / 30s | `15 + 15` | Two requests, exact |
 
-Never send arbitrary unsupported values such as 5, 7, 13, or 14 seconds merely to make a timeline add up.
+Do not maintain a global list of “unsupported” values. Validate every request against that model key's `allowed_duration_seconds` and `planning_max_duration_seconds`.
 
 ## Spoken Script Contract
 
@@ -41,7 +43,15 @@ Use `continuity_plan.mode=planned_cut` for multi-segment commerce video. Keep co
 - an intentional hook/demo/proof/CTA sequence;
 - cuts at completed sentences and stable visual moments.
 
-This improves business continuity without claiming that separate generative requests will create a mathematically seamless one-take video.
+Plan shots before distributing seconds. Each semantic beat belongs to exactly one Provider request. If a preferred beat crosses a route boundary, reflow the beat timings inside the assigned clip; do not submit half of the same action in one request and the remainder in another. Every edit boundary records:
+
+- the outgoing stable state and incoming continuity state;
+- the completed visible action that motivates the cut;
+- the complete-sentence speech boundary;
+- the full self-contained ambience/score/SFX fingerprint restated inside both independent requests, never “same as previous” or “沿用上一段”;
+- the required post-stitch visual, loudness and listening review.
+
+Independent generations share no native audio state. Restating the sonic fingerprint improves business continuity without claiming a mathematically seamless one-take or identical music. Exact score continuity requires a separately approved local post-production mix.
 
 ## Cost Contract
 

@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import time
 from pathlib import Path
 
@@ -19,7 +20,6 @@ from _common import (
 )
 from _workflow import atomic_write_json, build_contract, verify_contract
 from generate_video import asset_trace, build_payload, configured_video_references
-from subtitle_policy import enabled_subtitle_contract_errors
 from subtitle_runtime import subtitle_runtime_errors
 from validate_platform_plan import (
     model_contract_from_config,
@@ -52,13 +52,132 @@ def plan_errors(plan: dict, model: dict) -> list[str]:
     if int(production.get("per_shot_repair_limit") or 0) != 0:
         errors.append("per_shot_repair_limit must be 0")
     for shot in plan.get("shots") or []:
-        if "no newly generated written" not in str(shot.get("prompt") or "").lower():
+        prompt = str(shot.get("prompt") or "")
+        if "no newly generated written" not in prompt.lower():
             errors.append(f"{shot.get('id')} prompt is missing the clean Provider frame policy")
         boundary = shot.get("script_boundary") or {}
-        if shot.get("spoken_script") and boundary.get("stitch_safe") is not True:
-            errors.append(f"{shot.get('id')} does not end on a stitch-safe complete sentence")
-    errors.extend(enabled_subtitle_contract_errors(plan.get("subtitle_plan") or {}))
-    errors.extend(subtitle_runtime_errors(plan))
+        script = str(shot.get("spoken_script") or "").strip()
+        if script:
+            if boundary.get("stitch_safe") is not True:
+                errors.append(f"{shot.get('id')} does not end on a stitch-safe complete sentence")
+            occurrences = prompt.count(script)
+            contract_occurrences = (shot.get("prompt_contract") or {}).get("spoken_script_occurrences")
+            if occurrences != 1 or contract_occurrences != 1:
+                errors.append(
+                    f"{shot.get('id')} spoken script must appear exactly once in the Provider prompt; "
+                    f"actual={occurrences}, prompt_contract={contract_occurrences}"
+                )
+        if int(plan.get("plan_schema_version") or 1) >= 2:
+            counts = {
+                "AUDIO": len(re.findall(r"\bAUDIO\s*:", prompt, flags=re.IGNORECASE)),
+                "Cuts": len(re.findall(r"\bCuts\s*:", prompt, flags=re.IGNORECASE)),
+                "Sequence": len(re.findall(r"\bSequence\s*:", prompt, flags=re.IGNORECASE)),
+                "Reference image map": len(re.findall(r"\bReference image map\s*:", prompt, flags=re.IGNORECASE)),
+            }
+            expected_reference_maps = 1 if configured_video_references(plan, shot) else 0
+            if counts["AUDIO"] != 1:
+                errors.append(f"{shot.get('id')} must contain exactly one AUDIO block; actual={counts['AUDIO']}")
+            if counts["Cuts"] + counts["Sequence"] != 1:
+                errors.append(
+                    f"{shot.get('id')} must contain exactly one director timeline block; "
+                    f"Cuts={counts['Cuts']}, Sequence={counts['Sequence']}"
+                )
+            if counts["Reference image map"] != expected_reference_maps:
+                errors.append(
+                    f"{shot.get('id')} reference map count must be {expected_reference_maps}; actual={counts['Reference image map']}"
+                )
+            if re.search(r",\s*,", prompt):
+                errors.append(f"{shot.get('id')} contains an empty comma-delimited instruction")
+    audio = plan.get("audio_contract") or {}
+    voices = [str(value) for value in (audio.get("preset_voice_ids") or []) if str(value).strip()]
+    prompt_audio_tokens = [
+        token
+        for shot in plan.get("shots") or []
+        for token in re.findall(r"<AUDIO_\d+>", str(shot.get("prompt") or ""))
+    ]
+    if voices:
+        if audio.get("preset_voice_source") not in {"cli_user_explicit", "brief_user_explicit"}:
+            errors.append(
+                "Preset voice references require an explicit user choice recorded by the current planner; "
+                "re-prepare legacy automatic-voice plans with prompt-native speech"
+            )
+        expected_tokens = [f"<AUDIO_{index}>" for index in range(len(voices))] * len(plan.get("shots") or [])
+        if prompt_audio_tokens != expected_tokens:
+            errors.append(
+                f"Explicit preset voices require ordered AUDIO tokens; expected={expected_tokens}, actual={prompt_audio_tokens}"
+            )
+        approved = {
+            str(value)
+            for value in (model.get("approved_preset_voice_ids") or model.get("known_preset_voice_ids") or [])
+        }
+        unsupported = [voice_id for voice_id in voices if approved and voice_id not in approved]
+        if unsupported:
+            errors.append(f"Preset voice_id values are not in the configured approved voice allowlist: {unsupported}")
+    elif prompt_audio_tokens:
+        errors.append(
+            "Prompt-native speech must not contain <AUDIO_n> tokens when reference_audios is absent; re-prepare the plan"
+        )
+    sound = plan.get("sound_design_contract") or {}
+    if sound:
+        mode = str(sound.get("mode") or "")
+        if mode not in {"layered_native", "ambience_led", "voice_only"}:
+            errors.append("sound_design_contract.mode must be layered_native, ambience_led, or voice_only")
+        non_speech_required = bool(sound.get("non_speech_required"))
+        required_layers = sound.get("required_layers") or {}
+        if non_speech_required and not sound.get("native_provider_sound"):
+            errors.append("The selected route does not support the required native commercial sound plan")
+        if non_speech_required and not (required_layers.get("sfx") or required_layers.get("ambience")):
+            errors.append("A non-speech commercial sound plan must require SFX or ambience")
+        for shot in plan.get("shots") or []:
+            prompt = str(shot.get("prompt") or "")
+            if non_speech_required:
+                if required_layers.get("sfx") and (
+                    "Cues=" not in prompt or re.search(r"\bCues\s*=\s*(?:none|off|silent)\b", prompt, flags=re.IGNORECASE)
+                ):
+                    errors.append(f"{shot.get('id')} prompt is missing an audible synchronized sound cue")
+                if required_layers.get("ambience") and (
+                    "Ambience=" not in prompt or re.search(r"\bAmbience\s*=\s*(?:none|off|silent)\b", prompt, flags=re.IGNORECASE)
+                ):
+                    errors.append(f"{shot.get('id')} prompt is missing the planned ambience bed")
+                if required_layers.get("music") and "Music=no music" in prompt:
+                    errors.append(f"{shot.get('id')} requires music but disables it in the Provider prompt")
+                prompt_contract = shot.get("prompt_contract") or {}
+                if prompt_contract.get("compiler") == "director-commerce-v8":
+                    coverage = prompt_contract.get("sound_cue_coverage") or {}
+                    if coverage.get("clip_sfx_rendered") is not True:
+                        errors.append(f"{shot.get('id')} Provider prompt did not preserve the planned clip SFX")
+                    if coverage.get("all_beat_cues_rendered_in_timeline") is not True:
+                        errors.append(f"{shot.get('id')} Provider timeline did not preserve every planned sound cue")
+                    if coverage.get("audio_block_links_timecoded_cues") is not True:
+                        errors.append(f"{shot.get('id')} AUDIO block did not link the time-coded sound-on-action cues")
+                    if coverage.get("self_contained") is not True:
+                        errors.append(
+                            f"{shot.get('id')} sound prompt is not self-contained for an independent Provider request"
+                        )
+    talent = (plan.get("creative_contract") or {}).get("talent_contract") or {}
+    presence = str(talent.get("presence") or "")
+    combined_prompt = "\n".join(str(shot.get("prompt") or "") for shot in plan.get("shots") or [])
+    reference_roles = {
+        str(item.get("role") or "").lower()
+        for item in ((plan.get("asset_contract") or {}).get("video_reference_assets") or plan.get("video_references") or [])
+    }
+    if int(plan.get("plan_schema_version") or 1) >= 2 and presence not in {"none", "hands_only", "presenter"}:
+        errors.append("plan schema v2+ requires talent_contract.presence=none, hands_only, or presenter")
+    if "visible people demonstrate silently" in combined_prompt.lower():
+        errors.append("Provider prompt contains the ambiguous legacy instruction 'visible people demonstrate silently'; re-prepare the plan")
+    if presence == "none":
+        if "No person, face, body, hand, or human silhouette appears" not in combined_prompt:
+            errors.append("talent_presence=none requires an explicit no-human render instruction")
+        if reference_roles.intersection({"presenter", "wardrobe", "hand_action"}):
+            errors.append("talent_presence=none conflicts with human Provider references")
+    elif presence == "presenter" and "presenter" not in reference_roles:
+        errors.append("A visible presenter requires one generated presenter Provider reference before Stage 2")
+    voice_gender = str(audio.get("voice_gender") or "unspecified")
+    voice_description = str(audio.get("voice_description") or "")
+    if voice_gender == "female" and not re.search(r"\bfemale\b|女性|女声|女生", voice_description, flags=re.IGNORECASE):
+        errors.append("voice_gender=female is not preserved in voice_description")
+    if voice_gender == "male" and not re.search(r"\bmale\b|男性|男声|男生", voice_description, flags=re.IGNORECASE):
+        errors.append("voice_gender=male is not preserved in voice_description")
     return errors
 
 
@@ -106,6 +225,7 @@ def main() -> int:
         plan = load_json(plan_path)
         config = load_config(args.config)
         model = get_model_config(config, args.model_key or plan.get("model_key"))
+        subtitle_postproduction_warnings = subtitle_runtime_errors(plan)
         prompt_budget_chars, max_prompt_chars = prompt_limits(model)
         prompt_summary = []
         for shot in plan.get("shots") or []:
@@ -120,6 +240,9 @@ def main() -> int:
                 "within_budget": prompt_budget_chars is None or len(prompt) <= prompt_budget_chars,
                 "within_max": max_prompt_chars is None or len(prompt) <= max_prompt_chars,
                 "compiler": prompt_contract.get("compiler") or "",
+                "spoken_script_occurrences": prompt.count(str(shot.get("spoken_script") or "").strip())
+                if str(shot.get("spoken_script") or "").strip()
+                else 0,
             })
         errors = plan_errors(plan, model)
         errors.extend(platform_errors(plan, args.config, args.model_key))
@@ -177,6 +300,8 @@ def main() -> int:
             "dry_run_request_count": len(records),
             "expected_paid_requests": len(plan.get("shots") or []),
             "paid_generation_allowed": not errors,
+            "subtitle_postproduction_deferred": bool((plan.get("subtitle_plan") or {}).get("enabled")),
+            "subtitle_postproduction_warnings": subtitle_postproduction_warnings,
             "contract_reused": reused,
             "contract_file": str(contract_file) if not errors else "",
             "model_snapshot_file": str(snapshot_file) if not errors else "",

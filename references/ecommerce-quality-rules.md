@@ -28,12 +28,12 @@ These contracts make the plan reviewable before paid generation and keep platfor
 
 ## Speaker Mode
 
-Default to `digital-human-spoken`:
+Choose the mode by commercial purpose:
 
-- the visible model/digital-human is the seller/presenter;
-- the presenter speaks directly to camera with natural lip sync;
-- captions match the presenter's speech;
-- use off-screen narration only if the user explicitly asks for voiceover, documentary narration, or faceless style.
+- use a visible model/digital-human only when talent strengthens desire, trust, scale, use proof, or emotion;
+- when a presenter speaks, require natural-looking delivery and plausible mouth movement, but do not promise frame-exact lip sync;
+- use off-screen narration when the product or visual proof should remain the hero;
+- keep Provider frames free of captions; approved subtitles are created locally from the finished speech.
 
 In the proposal, always state one of:
 

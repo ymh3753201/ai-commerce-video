@@ -4,6 +4,8 @@
 from __future__ import annotations
 
 import argparse
+import base64
+import hashlib
 import json
 import re
 import time
@@ -21,10 +23,13 @@ from _common import (
     join_url,
     load_config,
     load_json,
+    local_asset_digest,
     model_api_key_names,
+    model_api_key_keychain_service,
     model_auth_scheme,
     model_provider,
     model_supports_reference_images,
+    network_route_summary,
     validate_provider_prompt_length,
     write_json,
 )
@@ -34,6 +39,7 @@ from _workflow import (
     record_submission_attempt,
     release_paid_submission_lock,
     transition_job,
+    verify_contract,
 )
 
 
@@ -79,8 +85,6 @@ def source_payload(image_info: dict, model: dict):
         return [url]
     if fmt in {"url_string", "string"}:
         return url
-    if fmt in {"input_reference", "input_reference_object"}:
-        return {"image_url": url}
     return {"url": url}
 
 
@@ -108,6 +112,95 @@ def configured_video_references(plan: dict, shot: dict) -> list[dict]:
     return shot.get("video_references") or contract.get("video_reference_assets") or []
 
 
+def _flatten_payload_images(value) -> list[str]:
+    if isinstance(value, str):
+        return [value]
+    if isinstance(value, list):
+        result: list[str] = []
+        for item in value:
+            result.extend(_flatten_payload_images(item))
+        return result
+    if isinstance(value, dict):
+        result: list[str] = []
+        for key in ("url", "image_url", "image"):
+            if key in value:
+                result.extend(_flatten_payload_images(value[key]))
+        return result
+    return []
+
+
+def payload_image_evidence(payload: dict, model: dict) -> list[dict]:
+    """Fingerprint the exact image values placed in the outbound payload without duplicating their bytes."""
+    source_field = str(model.get("source_image_field") or "image")
+    reference_field = str(model.get("reference_field") or "reference_images")
+    fields = [(source_field, "source")]
+    if reference_field != source_field:
+        fields.append((reference_field, "reference"))
+    evidence: list[dict] = []
+    for field, role in fields:
+        for index, value in enumerate(_flatten_payload_images(payload.get(field)), start=1):
+            item = {"field": field, "index": index, "role": role, "transport": "unknown", "sha256": ""}
+            if value.startswith("data:") and "," in value:
+                header, encoded = value.split(",", 1)
+                try:
+                    raw = base64.b64decode(encoded, validate=True)
+                except (ValueError, base64.binascii.Error) as exc:
+                    raise ScriptError(f"Invalid base64 source image in payload field {field}[{index}]") from exc
+                item.update({
+                    "transport": "data_uri",
+                    "mime_type": header[5:].split(";", 1)[0],
+                    "size_bytes": len(raw),
+                    "sha256": hashlib.sha256(raw).hexdigest(),
+                })
+            elif is_url(value):
+                item.update({
+                    "transport": "https_url" if value.startswith("https://") else "http_url",
+                    "url_sha256": hashlib.sha256(value.encode("utf-8")).hexdigest(),
+                })
+            else:
+                item.update({
+                    "transport": "opaque",
+                    "value_sha256": hashlib.sha256(value.encode("utf-8")).hexdigest(),
+                })
+            evidence.append(item)
+    return evidence
+
+
+def request_evidence(payload: dict, model: dict) -> dict:
+    prompt = str(payload.get("prompt") or "")
+    return {
+        "schema_version": "1.0",
+        "prompt_char_count": len(prompt),
+        "prompt_utf8_bytes": len(prompt.encode("utf-8")),
+        "prompt_sha256": hashlib.sha256(prompt.encode("utf-8")).hexdigest(),
+        "payload_sha256": canonical_digest(payload),
+        "source_images": payload_image_evidence(payload, model),
+        "provider_input_receipt_required": True,
+    }
+
+
+def provider_contract_diagnostic(exc: Exception, payload: dict, model: dict) -> dict | None:
+    """Classify a Provider image-count rejection that contradicts the exact outbound payload."""
+    message = str(exc)
+    if "exactly one reference image" not in message.lower():
+        return None
+    images = payload_image_evidence(payload, model)
+    if len(images) != 1:
+        return None
+    source_field = str(model.get("source_image_field") or "image")
+    return {
+        "code": "provider_image_contract_mismatch",
+        "provider": model.get("provider"),
+        "provider_contract_version": model.get("provider_contract_version"),
+        "configured_field": source_field,
+        "configured_payload_format": model.get("source_payload_format"),
+        "local_image_count": 1,
+        "local_image_transport": images[0].get("transport"),
+        "automatic_retry_allowed": False,
+        "recommended_action": "Keep the shot blocked and ask the Provider to inspect image-field conversion or channel routing.",
+    }
+
+
 def asset_trace(plan: dict, shot: dict, model: dict, references_included: bool, reference_assets: list[dict]) -> dict:
     image = shot.get("image") or plan.get("product_asset") or {}
     contract = plan.get("asset_contract") or {}
@@ -122,7 +215,16 @@ def asset_trace(plan: dict, shot: dict, model: dict, references_included: bool, 
         "reference_field": model.get("reference_field", "reference_images"),
         "reference_payload_format": model.get("reference_payload_format", "url_objects"),
         "references_included_in_payload": references_included,
+        "source_image_included_in_payload": not references_included or bool(model.get("include_source_image_with_references")),
+        "reference_mode_exclusive_with_source": bool(model.get("reference_mode_exclusive_with_source")),
         "reference_count": len(reference_assets),
+        "reference_asset_policy": model.get("reference_asset_policy", "provider_specific"),
+        "raw_input_assets_uploaded": bool(
+            model.get("require_generated_video_references")
+            and any(ref.get("provenance") != "generated_from_approved_visual_plan" for ref in reference_assets)
+        ) if model.get("require_generated_video_references") else None,
+        "raw_non_product_assets_uploaded": False if model.get("require_generated_video_references") else None,
+        "generated_reference_provenance": [ref.get("provenance") for ref in reference_assets],
         "source_image": {
             "role": image.get("role", "product") if isinstance(image, dict) else "unknown",
             "value": asset_value(image),
@@ -185,6 +287,25 @@ def validate_clean_provider_payload(plan: dict, shot: dict, payload: dict) -> No
         raise ScriptError(
             f"Provider prompt for {shot.get('id')} is missing the fixed clean-frame no-written-elements policy"
         )
+    if int(plan.get("plan_schema_version") or 1) >= 2:
+        audio_count = len(re.findall(r"\bAUDIO\s*:", str(shot.get("prompt") or ""), flags=re.IGNORECASE))
+        cuts_count = len(re.findall(r"\bCuts\s*:", str(shot.get("prompt") or ""), flags=re.IGNORECASE))
+        sequence_count = len(re.findall(r"\bSequence\s*:", str(shot.get("prompt") or ""), flags=re.IGNORECASE))
+        reference_map_count = len(re.findall(r"\bReference image map\s*:", str(shot.get("prompt") or ""), flags=re.IGNORECASE))
+        expected_reference_maps = 1 if configured_video_references(plan, shot) else 0
+        if audio_count != 1:
+            raise ScriptError(f"Provider prompt must contain exactly one AUDIO block; got {audio_count}")
+        if cuts_count + sequence_count != 1:
+            raise ScriptError(
+                "Provider prompt must contain exactly one director timeline block; "
+                f"Cuts={cuts_count}, Sequence={sequence_count}"
+            )
+        if reference_map_count != expected_reference_maps:
+            raise ScriptError(
+                f"Provider prompt reference map count must be {expected_reference_maps}; got {reference_map_count}"
+            )
+        if re.search(r",\s*,", str(shot.get("prompt") or "")):
+            raise ScriptError("Provider prompt contains an empty comma-delimited instruction")
 
 
 def validate_asset_consistency(plan: dict, shot: dict, model: dict) -> None:
@@ -214,6 +335,68 @@ def validate_asset_consistency(plan: dict, shot: dict, model: dict) -> None:
                 "Asset mismatch: confirmed reference image(s) exist, but no video reference assets were prepared for this multi-reference model. "
                 "Re-run prepare_project.py so it can build the reference prompt map and payload references."
             )
+        if model.get("require_generated_video_references"):
+            if not video_refs:
+                raise ScriptError("Professional reference route requires a complete generated Reference Pack.")
+            roles = [str(ref.get("role") or "reference").strip().lower() for ref in video_refs]
+            if model.get("require_product_anchor_reference") and (not roles or roles[0] != "product"):
+                raise ScriptError("The first Provider reference must be the generated professional product master.")
+            if model.get("require_generated_product_reference") and "product" not in roles:
+                raise ScriptError("Generated Provider reference set is missing role=product.")
+            forbidden = sorted(
+                role for role in roles if role in {"storyboard", "storyboard_sheet", "storyboard_preview", "shot_plan"}
+            )
+            if forbidden and not model.get("allow_storyboard_reference_upload", True):
+                raise ScriptError(
+                    f"Storyboard/contact-sheet assets are review-only and cannot enter this Provider payload: {forbidden}"
+                )
+            invalid_provenance = [
+                asset_value(ref)
+                for ref in video_refs
+                if ref.get("provider_upload_allowed") is not True
+                or ref.get("provenance") != "generated_from_approved_visual_plan"
+            ]
+            if invalid_provenance:
+                raise ScriptError(
+                    "Every Provider reference must be generated from the approved visual plan; raw user images are forbidden. "
+                    f"Invalid assets: {invalid_provenance}"
+                )
+            if model.get("require_local_generated_references"):
+                non_local = [
+                    asset_value(ref)
+                    for ref in video_refs
+                    if ref.get("kind") != "file" or not Path(str(asset_value(ref))).is_file()
+                ]
+                if non_local:
+                    raise ScriptError(f"Generated Provider references must be saved local files: {non_local}")
+            raw_inputs = contract.get("input_evidence_assets") or plan.get("input_evidence_assets") or []
+            if contract.get("raw_inputs_provider_upload_allowed") is not False:
+                raise ScriptError("Raw input evidence is not explicitly blocked from Provider upload.")
+            raw_digests = {local_asset_digest(asset) for asset in raw_inputs if local_asset_digest(asset)}
+            reused_raw = [
+                asset_value(ref)
+                for ref in video_refs
+                if local_asset_digest(ref) and local_asset_digest(ref) in raw_digests
+            ]
+            if reused_raw:
+                raise ScriptError(
+                    "A Provider reference is identical to raw user evidence. Generate a professional product master or control "
+                    f"from the approved plan instead: {reused_raw}"
+                )
+            prompt_map = shot.get("reference_prompt_map") or contract.get("reference_prompt_map") or []
+            if len(prompt_map) != len(video_refs):
+                raise ScriptError("Reference prompt map count does not match the generated Provider reference count.")
+            prompt = str(shot.get("prompt") or "")
+            invalid_token_counts = {
+                str(item.get("token") or ""): prompt.count(str(item.get("token") or ""))
+                for item in prompt_map
+                if not item.get("token") or prompt.count(str(item.get("token") or "")) != 1
+            }
+            if invalid_token_counts:
+                raise ScriptError(
+                    "Provider prompt must contain exactly one canonical token mapping per uploaded reference: "
+                    f"{invalid_token_counts}"
+                )
         return
     if references and source not in {asset_value(ref) for ref in references if ref.get("role") in VIDEO_SOURCE_ROLE_PRIORITY}:
         roles = ", ".join(ref.get("role", "reference") for ref in references)
@@ -265,6 +448,57 @@ def build_payload(plan: dict, shot: dict, model: dict) -> dict:
             payload[source_field] = existing + refs
         else:
             payload[reference_field] = refs
+    audio_contract = plan.get("audio_contract") or {}
+    voice_ids = [str(value) for value in (audio_contract.get("preset_voice_ids") or []) if str(value).strip()]
+    prompt_audio_tokens = re.findall(r"<AUDIO_\d+>", str(shot.get("prompt") or ""))
+    if not voice_ids and prompt_audio_tokens:
+        raise ScriptError(
+            "Provider prompt contains preset AUDIO tokens but the plan sends no reference_audios. "
+            "Re-prepare the plan with prompt-native voice direction before paid submission."
+        )
+    if voice_ids:
+        if audio_contract.get("preset_voice_source") not in {"cli_user_explicit", "brief_user_explicit"}:
+            raise ScriptError(
+                "Preset voice references require an explicit user choice recorded by the current planner. "
+                "Re-prepare legacy automatic-voice plans with prompt-native speech before paid submission."
+            )
+        expected_tokens = [f"<AUDIO_{index}>" for index in range(len(voice_ids))]
+        if prompt_audio_tokens != expected_tokens:
+            raise ScriptError(
+                f"Explicit preset voices require one ordered prompt token each; expected={expected_tokens}, "
+                f"actual={prompt_audio_tokens}."
+            )
+        approved_voices = {
+            str(value)
+            for value in (model.get("approved_preset_voice_ids") or model.get("known_preset_voice_ids") or [])
+        }
+        unsupported_voices = [voice_id for voice_id in voice_ids if approved_voices and voice_id not in approved_voices]
+        if unsupported_voices:
+            raise ScriptError(
+                f"Preset voice_id values are not in the configured allowlist: {unsupported_voices}; stop before paid POST."
+            )
+        if not model.get("supports_preset_voice_references"):
+            raise ScriptError("Preset voice references were approved, but the selected model route does not support them.")
+        maximum_voices = int(model.get("max_reference_audios") or 0)
+        if maximum_voices and len(voice_ids) > maximum_voices:
+            raise ScriptError(f"Selected model accepts at most {maximum_voices} preset voice reference(s).")
+        payload[model.get("reference_audio_field") or "reference_audios"] = [
+            {"voice_id": voice_id} for voice_id in voice_ids
+        ]
+    min_references = int(model.get("min_reference_images") or 0)
+    if input_mode == "reference-to-video" and len(reference_assets) < min_references:
+        raise ScriptError(
+            f"Reference-to-video requires at least {min_references} reference image(s); got {len(reference_assets)}."
+        )
+    if (
+        model.get("reference_mode_exclusive_with_source")
+        and source_field != reference_field
+        and source_field in payload
+        and reference_field in payload
+    ):
+        raise ScriptError(
+            f"Invalid mixed video mode: {source_field!r} and {reference_field!r} are mutually exclusive."
+        )
     validate_clean_provider_payload(plan, shot, payload)
     return payload
 
@@ -299,6 +533,30 @@ def selected_shots(plan: dict, shot_id: str | None) -> list[dict]:
     return shots
 
 
+def current_contract_request_records(plan: dict, model: dict) -> list[dict]:
+    """Rebuild every approved request in memory before any paid Provider call."""
+    records: list[dict] = []
+    for shot in plan.get("shots") or []:
+        payload = build_payload(plan, shot, model)
+        references = configured_video_references(plan, shot)
+        records.append({
+            "shot_id": shot.get("id"),
+            "model_key": model.get("key"),
+            "provider": model.get("provider"),
+            "payload": payload,
+            "asset_trace": asset_trace(
+                plan,
+                shot,
+                model,
+                bool(references and model_supports_reference_images(model)),
+                references,
+            ),
+            "dry_run": True,
+            "paid_api_call": False,
+        })
+    return records
+
+
 def resolve_confirmation(args) -> dict:
     if args.dry_run:
         return {"confirmed": False, "source": "dry_run"}
@@ -321,18 +579,35 @@ def resolve_confirmation(args) -> dict:
             "approved_by": confirmation.get("approved_by", ""),
             "approved_at": confirmation.get("approved_at", ""),
         }
-    if args.confirmed:
-        return {
-            "confirmed": True,
-            "source": "manual_cli_flag",
-            "image_assets_confirmed": "assumed_from_user_confirmation",
-            "video_generation_confirmed": True,
-        }
     raise ScriptError(
-        "Refusing paid API call without explicit final confirmation. "
-        "After the user approves the generated image/reference set, re-run with --confirmed, "
-        "or pass --confirmation-file containing image_assets_confirmed=true and video_generation_confirmed=true."
+        "Refusing paid API call outside the guarded paid workflow. "
+        "Run workflow_engine.py confirm and submit so the immutable confirmation, production contract, "
+        "provider readiness check, paid cap, and one-submit ledger are all enforced."
     )
+
+
+def validate_readiness_binding(path: Path, model: dict) -> dict:
+    report = load_json(path)
+    if report.get("ok") is not True or report.get("status") not in {"pass", "not_required"}:
+        raise ScriptError("Provider readiness did not pass; refusing paid submission")
+    expected = {
+        "provider": model.get("provider"),
+        "model_key": model.get("key"),
+        "target_model": model.get("model"),
+        "provider_base_url": model.get("base_url"),
+    }
+    mismatches = [key for key, value in expected.items() if report.get(key) != value]
+    if mismatches:
+        raise ScriptError(
+            "Provider readiness no longer matches the selected route: " + ", ".join(mismatches)
+        )
+    current_route = network_route_summary()
+    if report.get("network_route") != current_route:
+        raise ScriptError(
+            "Provider network route changed after the free readiness check; refusing paid POST. "
+            "Run submit again after restoring the intended route."
+        )
+    return report
 
 
 def main() -> int:
@@ -342,9 +617,10 @@ def main() -> int:
     parser.add_argument("--model-key", help="Override model key")
     parser.add_argument("--shot-id", help="Only submit one shot")
     parser.add_argument("--dry-run", action="store_true", help="Write request payloads without calling API")
-    parser.add_argument("--confirmed", action="store_true", help="Required for real paid API calls after final user approval of the generated image/reference set")
-    parser.add_argument("--confirmation-file", help="JSON file with image_assets_confirmed=true, video_generation_confirmed=true, and optional approved_by fields")
-    parser.add_argument("--max-paid-submissions", type=int, help="Guarded workflow cap; must equal the base shot count and immutable confirmation")
+    parser.add_argument("--confirmed", action="store_true", help=argparse.SUPPRESS)
+    parser.add_argument("--confirmation-file", help="Immutable confirmation created by workflow_engine.py confirm")
+    parser.add_argument("--readiness-file", help="Free Provider readiness report created immediately before submit")
+    parser.add_argument("--max-paid-submissions", type=int, help="Guarded workflow cap supplied by workflow_engine.py submit")
     parser.add_argument("--timeout", type=int, default=60, help="HTTP timeout seconds")
     args = parser.parse_args()
 
@@ -353,16 +629,28 @@ def main() -> int:
         plan = load_json(plan_path)
         config = load_config(args.config)
         model = get_model_config(config, args.model_key or plan.get("model_key"))
-        submit_url = join_url(model["base_url"], model.get("generation_path", "/video/generations"))
+        submit_url = join_url(model["base_url"], model.get("generation_path", "/v1/videos/generations"))
+        if not args.dry_run and (
+            not args.confirmation_file or not args.readiness_file or args.max_paid_submissions is None
+        ):
+            raise ScriptError(
+                "Refusing paid API call outside the guarded paid workflow. "
+                "Use workflow_engine.py confirm and submit; --confirmed alone cannot authorize a Provider POST."
+            )
         confirmation_record = resolve_confirmation(args)
-        api_key = None if args.dry_run else find_api_key(required=True, names=model_api_key_names(model))
+        readiness_record = None if args.dry_run else validate_readiness_binding(
+            Path(args.readiness_file).expanduser().resolve(), model
+        )
+        api_key = None if args.dry_run else find_api_key(
+            required=True,
+            names=model_api_key_names(model),
+            keychain_service=model_api_key_keychain_service(model),
+        )
         results = []
         project_dir = plan_path.parent
         ledger = None
         paid_lock = None
-        if not args.dry_run and args.max_paid_submissions is not None:
-            if not args.confirmation_file:
-                raise ScriptError("Guarded paid submission requires --confirmation-file")
+        if not args.dry_run:
             confirmation = load_json(Path(args.confirmation_file).expanduser().resolve())
             contract = load_json(project_dir / "production-contract.json")
             base_count = len(plan.get("shots") or [])
@@ -376,6 +664,18 @@ def main() -> int:
                 raise ScriptError("Confirmation plan digest does not match generation-plan.json")
             if confirmation.get("duration_plan_digest") != plan.get("duration_plan_digest"):
                 raise ScriptError("Confirmation duration-plan digest does not match generation-plan.json")
+            contract_errors = verify_contract(
+                contract,
+                plan,
+                model,
+                current_contract_request_records(plan, model),
+            )
+            if contract_errors:
+                raise ScriptError(
+                    "Refusing paid submission because the current model or request payload has drifted from preflight: "
+                    + "; ".join(contract_errors)
+                    + ". Run preflight again and obtain a new confirmation before any paid request."
+                )
             ledger = load_or_create_jobs(
                 project_dir,
                 plan,
@@ -396,8 +696,11 @@ def main() -> int:
                     "provider": model.get("provider"),
                     "submit_url": submit_url,
                     "payload": payload,
+                    "request_evidence": request_evidence(payload, model),
+                    "quality_contract": plan.get("quality_contract") or {},
                     "asset_trace": asset_trace(plan, shot, model, references_included, reference_assets),
                     "confirmation": confirmation_record,
+                    "provider_readiness": readiness_record,
                     "dry_run": args.dry_run,
                     "created_at": int(time.time()),
                 }
@@ -406,12 +709,18 @@ def main() -> int:
                 else:
                     if ledger is not None:
                         record_submission_attempt(project_dir, ledger, shot["id"])
+                    write_json(request_file, record)
                     try:
                         record["response"] = normalize_submit_response(
                             http_json("POST", submit_url, api_key, payload, timeout=args.timeout, auth_scheme=model_auth_scheme(model)),
                             shot["id"],
                         )
                     except Exception as exc:
+                        record["submission_error"] = str(exc)
+                        diagnostic = provider_contract_diagnostic(exc, payload, model)
+                        if diagnostic:
+                            record["provider_contract_diagnostic"] = diagnostic
+                        write_json(request_file, record)
                         if ledger is not None:
                             transition_job(project_dir, ledger, shot["id"], "blocked", last_error=str(exc))
                         raise

@@ -212,48 +212,6 @@ def normalize_srt_for_profile(text: str, profile: dict) -> str:
     return "\n".join(blocks)
 
 
-def confirmed_script_srt(
-    script_text: str,
-    start_second: float,
-    end_second: float,
-    profile: dict,
-    timing_entries: list[dict] | None = None,
-) -> str:
-    """Build caption text from the confirmed script inside the final-audio timing range."""
-    cleaned = re.sub(r"\s+", " ", (script_text or "").strip())
-    if not cleaned:
-        raise ScriptError("Confirmed script text is empty; it cannot be used as the subtitle lexical source.")
-    start = max(0.0, float(start_second))
-    end = float(end_second)
-    if end <= start:
-        raise ScriptError("Final-audio timing range is invalid for confirmed-script subtitles.")
-    has_cjk = bool(re.search(r"[\u3400-\u9fff]", cleaned))
-    max_chars = int(
-        profile.get("max_chars_zh_per_line" if has_cjk else "max_chars_latin_per_line")
-        or (16 if has_cjk else 34)
-    )
-    units = split_caption_units(cleaned, max_chars)
-    if timing_entries and len(units) == len(timing_entries):
-        return "\n".join(
-            f"{index}\n{srt_time(float(timing['start']))} --> {srt_time(float(timing['end']))}\n{unit}\n"
-            for index, (unit, timing) in enumerate(zip(units, timing_entries), start=1)
-        )
-    seed = f"1\n{srt_time(start)} --> {srt_time(end)}\n{cleaned}\n"
-    return normalize_srt_for_profile(seed, profile)
-
-
-def confirmed_script_text(plan: dict) -> str:
-    direct = re.sub(r"\s+", " ", str(plan.get("spoken_script") or plan.get("script_text") or "").strip())
-    if direct:
-        return direct
-    segments = [
-        re.sub(r"\s+", " ", str(shot.get("spoken_script") or shot.get("script_segment") or "").strip())
-        for shot in (plan.get("shots") or [])
-        if str(shot.get("spoken_script") or shot.get("script_segment") or "").strip()
-    ]
-    return " ".join(segments).strip()
-
-
 def clamp_srt_to_duration(text: str, duration_seconds: float) -> str:
     """Clamp local-ASR cue tails to the exact verified video duration."""
     limit = max(0.0, float(duration_seconds))
@@ -385,20 +343,9 @@ def main() -> int:
             raw_entries = parse_srt_entries(raw_text)
             raw_asr_cue_count = len(raw_entries)
             raw_asr_sha256 = sha256_file(raw_asr_path)
-            script_text = confirmed_script_text(plan)
-            if script_text:
-                text = confirmed_script_srt(
-                    script_text,
-                    start_second=float(raw_entries[0]["start"]),
-                    end_second=float(raw_entries[-1]["end"]),
-                    profile=subtitle_plan.get("profile") or {},
-                    timing_entries=raw_entries,
-                )
-                lexical_source = "confirmed_script"
-                audio_cue_alignment_used = len(parse_srt_entries(text)) == len(raw_entries)
-            else:
-                text = normalize_srt_for_profile(raw_text, subtitle_plan.get("profile") or {})
-                lexical_source = "local_whisper_cpp"
+            text = normalize_srt_for_profile(raw_text, subtitle_plan.get("profile") or {})
+            lexical_source = "final_audio_transcript"
+            audio_cue_alignment_used = len(parse_srt_entries(text)) == len(raw_entries)
         output.parent.mkdir(parents=True, exist_ok=True)
         output.write_text(text, encoding="utf-8")
         last_end = last_srt_end_seconds(text)

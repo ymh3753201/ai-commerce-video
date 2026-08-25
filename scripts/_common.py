@@ -22,8 +22,11 @@ SKILL_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_CONFIG = SKILL_ROOT / "assets" / "templates" / "model-config.example.json"
 KEY_ENV_NAMES = ("AI_COMMERCE_VIDEO_API_KEY", "YUNWU_API_KEY", "XAI_API_KEY")
 ENV_FILE_ENV = "AI_COMMERCE_VIDEO_ENV_FILE"
+PROXY_URL_ENV = "AI_COMMERCE_VIDEO_PROXY_URL"
 DEFAULT_ENV_FILES = (
+    Path.home() / ".codex" / "ai-commerce-video-mikuapi.env",
     Path.home() / ".codex" / "ai-commerce-video.env",
+    SKILL_ROOT.parent / ".ai-commerce-video.env",
     SKILL_ROOT / ".env.local",
 )
 
@@ -48,6 +51,15 @@ def sha256_file(path: Path) -> str:
     return digest.hexdigest()
 
 
+def local_asset_digest(asset: dict) -> str:
+    if asset.get("kind") != "file":
+        return ""
+    path = Path(str(asset_value(asset))).expanduser()
+    if not path.is_file():
+        return ""
+    return sha256_file(path)
+
+
 def asset_value(asset: dict | None) -> str:
     if not isinstance(asset, dict):
         return ""
@@ -67,6 +79,10 @@ def model_api_key_names(model: dict) -> list[str] | None:
     if isinstance(names, list) and names:
         return [str(name) for name in names if str(name).strip()]
     return None
+
+
+def model_api_key_keychain_service(model: dict) -> str:
+    return str(model.get("api_key_keychain_service") or "").strip()
 
 
 def model_auth_scheme(model: dict) -> str:
@@ -173,15 +189,16 @@ def get_model_config(config: Dict[str, Any], model_key: Optional[str]) -> Dict[s
         raise ScriptError(f"Unknown model key: {key!r}")
     model = dict(models[key])
     model["key"] = key
+    allow_legacy_global_overrides = bool(model.get("allow_legacy_global_overrides", True))
     key_specific_base_url = os.getenv(model_base_url_env_name(key))
     if key_specific_base_url:
         model["base_url"] = key_specific_base_url
-    elif os.getenv("AI_COMMERCE_VIDEO_BASE_URL") and (requested_key is None or key == config.get("default_model")):
+    elif allow_legacy_global_overrides and os.getenv("AI_COMMERCE_VIDEO_BASE_URL") and (requested_key is None or key == config.get("default_model")):
         model["base_url"] = os.environ["AI_COMMERCE_VIDEO_BASE_URL"]
     key_specific_model = os.getenv(model_env_name(key))
     if key_specific_model:
         model["model"] = key_specific_model
-    elif os.getenv("AI_COMMERCE_VIDEO_MODEL"):
+    elif allow_legacy_global_overrides and os.getenv("AI_COMMERCE_VIDEO_MODEL"):
         # Keep the legacy/global model override scoped to the default route.
         # Otherwise a private env file for a single-image model can accidentally
         # override a deliberately selected multi-reference model key.
@@ -192,16 +209,34 @@ def get_model_config(config: Dict[str, Any], model_key: Optional[str]) -> Dict[s
     return model
 
 
-def find_api_key(required: bool = True, names: tuple[str, ...] | list[str] | None = None) -> Optional[str]:
+def find_api_key(
+    required: bool = True,
+    names: tuple[str, ...] | list[str] | None = None,
+    keychain_service: str = "",
+) -> Optional[str]:
     loaded = load_runtime_env()
     key_names = tuple(names or KEY_ENV_NAMES)
     for name in key_names:
         value = os.getenv(name)
         if value:
             return value
+    service = str(keychain_service or "").strip()
+    security = None if os.getenv("AI_COMMERCE_VIDEO_DISABLE_KEYCHAIN") == "1" else shutil.which("security")
+    if service and security:
+        result = subprocess.run(
+            [security, "find-generic-password", "-w", "-s", service],
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            check=False,
+        )
+        value = result.stdout.strip()
+        if result.returncode == 0 and value:
+            return value
     if required:
         names_text = ", ".join(key_names)
-        hint = "Run scripts/setup_private_env.py or create ~/.codex/ai-commerce-video.env."
+        keychain_hint = f" or macOS Keychain service {service!r}" if service else ""
+        hint = f"Run scripts/setup_private_env.py, set a private env variable{keychain_hint}."
         loaded_hint = f" Loaded env files: {', '.join(loaded)}." if loaded else " No private env file was loaded."
         raise ScriptError(f"Missing API key. Set one of: {names_text}. {hint}{loaded_hint}")
     return None
@@ -232,7 +267,56 @@ def normalize_base_url(base_url: str) -> str:
 def join_url(base_url: str, path: str) -> str:
     base = normalize_base_url(base_url)
     suffix = path if path.startswith("/") else f"/{path}"
+    if base.endswith("/v1") and suffix.startswith("/v1/"):
+        suffix = suffix[3:]
     return base + suffix
+
+
+def configured_proxy_url() -> Optional[str]:
+    """Return the Skill-specific proxy without changing system or proxy-app settings."""
+    load_runtime_env()
+    value = str(os.getenv(PROXY_URL_ENV) or "").strip()
+    if not value:
+        return None
+    parsed = urlparse(value)
+    if parsed.scheme.lower() not in {"http", "https"} or not parsed.hostname:
+        raise ScriptError(
+            f"{PROXY_URL_ENV} must be a complete http:// or https:// proxy URL. "
+            "The Skill never edits Clash or system proxy settings."
+        )
+    return value
+
+
+def network_route_summary() -> Dict[str, Any]:
+    """Describe the effective HTTP route without exposing proxy credentials."""
+    explicit = configured_proxy_url()
+    source = PROXY_URL_ENV if explicit else "system_or_standard_environment"
+    value = explicit
+    if not value:
+        proxies = urllib.request.getproxies()
+        value = str(proxies.get("https") or proxies.get("http") or "").strip()
+    if not value:
+        return {"mode": "direct", "source": "none"}
+    parsed = urlparse(value if "://" in value else f"http://{value}")
+    return {
+        "mode": "proxy",
+        "source": source,
+        "scheme": parsed.scheme or "http",
+        "host": parsed.hostname or "",
+        "port": parsed.port,
+        "has_credentials": bool(parsed.username or parsed.password),
+    }
+
+
+def open_url(request: urllib.request.Request, timeout: int):
+    """Open a request through the dedicated Skill proxy when configured."""
+    proxy_url = configured_proxy_url()
+    if proxy_url:
+        opener = urllib.request.build_opener(
+            urllib.request.ProxyHandler({"http": proxy_url, "https": proxy_url})
+        )
+        return opener.open(request, timeout=timeout)
+    return urllib.request.urlopen(request, timeout=timeout)
 
 
 def http_json(method: str, url: str, api_key: str, payload: Optional[Dict[str, Any]] = None, timeout: int = 60, auth_scheme: str = "Bearer") -> Dict[str, Any]:
@@ -248,7 +332,7 @@ def http_json(method: str, url: str, api_key: str, payload: Optional[Dict[str, A
         headers["Content-Type"] = "application/json"
     request = urllib.request.Request(url, data=body, headers=headers, method=method.upper())
     try:
-        with urllib.request.urlopen(request, timeout=timeout) as response:
+        with open_url(request, timeout=timeout) as response:
             text = response.read().decode("utf-8")
             try:
                 return json.loads(text)
@@ -266,7 +350,7 @@ def download_file(url: str, output_path: Path, timeout: int = 120) -> None:
     output_path.parent.mkdir(parents=True, exist_ok=True)
     request = urllib.request.Request(url, headers={"User-Agent": "ai-commerce-video-skill/1.0"})
     try:
-        with urllib.request.urlopen(request, timeout=timeout) as response, output_path.open("wb") as out:
+        with open_url(request, timeout=timeout) as response, output_path.open("wb") as out:
             shutil.copyfileobj(response, out)
     except urllib.error.URLError as exc:
         raise ScriptError(f"Failed to download {url}: {exc}") from exc

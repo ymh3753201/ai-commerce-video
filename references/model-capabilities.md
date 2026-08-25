@@ -1,123 +1,99 @@
 # Model Capabilities
 
-This skill is model-config driven. Do not hardcode one model or one number of reference images. Choose the plan from the selected model's capabilities.
+This Skill is model-config driven. Model name, provider, route, input mode, image field, duration, resolution, response shape, key, and billing guard form one contract. Never switch a provider by changing only a name or URL.
 
-Source of truth for the 119337 route: Google Doc `API接入说明`, read on 2026-07-08.
-Official xAI sources checked on 2026-07-15:
+Official xAI sources checked on 2026-08-23:
 
+- https://x.ai/news/grok-imagine-video-1-5-references
 - https://docs.x.ai/developers/model-capabilities/video/generation
-- https://x.ai/news/grok-imagine-video-1-5
-- https://docs.x.ai/developers/pricing
-
-Seedance 2.0 source references checked on 2026-07-08:
-
-- https://fal.ai/models/bytedance/seedance-2.0/reference-to-video/api
-- https://fal.ai/docs/documentation/model-apis/inference/queue
-
-## Default Route
-
-The default configured route is:
-
-- provider: `119337`;
-- base URL: `https://api.119337.xyz/v1`;
-- create endpoint: `/video/generations`;
-- poll endpoint: `/video/generations/{task_id}`;
-- default model: `grok-video-1.5`;
-- default duration: 15 seconds;
-- Provider hard prompt limit: `max_prompt_chars=4096`;
-- internal safe prompt budget: `prompt_budget_chars=3200`;
-- primary mode: single-reference image-to-video.
+- https://docs.x.ai/developers/model-capabilities/video/reference-to-video
+- https://docs.x.ai/developers/model-capabilities/video/image-to-video
+- https://docs.x.ai/developers/model-capabilities/audio/text-to-speech
 
 ## Capability Table
 
-| Model | Text-to-video | Single image | Multi image | Max duration | Aspect ratio | Notes |
-|---|---:|---:|---:|---:|---|---|
-| `grok-video-1.5` | No | Yes, exactly 1 image | No | 15s | `16:9`, `9:16` | Working 119337 Provider alias for the official GA `grok-imagine-video-1.5` family; keep schemas distinct. |
-| `grok-image-video` | Yes | Yes | Yes, up to 7 images | 15s text/single, 10s multi | `1:1`, `16:9`, `9:16`, `4:3`, `3:4`, `3:2`, `2:3` | General model. Multi-reference requests over 10s are capped by the provider, so split before generation. |
-| `seedance2` | No | Yes | Yes, up to 9 images | 15s | `9:16`, `16:9`, `1:1`, `4:3`, `3:4`, `21:9` | fal queue reference-to-video route. Use `FAL_KEY`; prompts cite references as `@Image1`, `@Image2`, etc. |
+| Config key | Provider | Mode | Images | Duration | Resolution | Main use |
+|---|---|---|---:|---:|---|---|
+| `grok_video_15_reference` | MikuAPI relay | reference-to-video | 1–7 | accepts 1–15s; reliable planning ceiling currently 10s | 480p/720p | Default professional ads using an all-generated Reference Pack with a faithful product master first |
+| `grok_video_15_reference_xai` | official xAI | reference-to-video | 1–7 | 1–15s | 480p/720p | Optional direct route using the same model and visual contract |
+| `grok_video_15` | MikuAPI relay | image-to-video | exactly 1 first frame | 1–15s | 480p/720p | Preserved legacy workflow when one approved composite first frame is sufficient |
+| `grok_image_video` | third-party 119337 | provider-specific image/video | up to 7 | 15s single, 10s multi | 480p/720p | Optional legacy provider route; keep its aliases isolated |
+| `seedance2` | fal queue | reference-to-video | up to 9 | up to 15s | configured provider limits | Optional Seedance storyboard workflow |
 
-Resolution for the 119337 route: `720p` or `480p`.
-Resolution for the bundled fal Seedance 2.0 route: config includes `480p`, `720p`, `1080p`, and `4k`; check current provider pricing and limits before paid generation.
+Reference-to-video on `grok-imagine-video-1.5` supports up to 15 seconds but is capped at 720p. Native 1080p applies to xAI text-to-video and image-to-video, not reference-to-video.
 
-The Provider prompt compiler keeps the detailed platform, scenario, and compliance contracts in the plan while sending only compact render instructions to the model. `prompt_budget_chars` is the normal hard workflow gate; `max_prompt_chars` is the Provider rejection boundary. Do not truncate approved visual details or spoken dialogue to fit either value. Remove only planning-only duplication, or split/redesign the segment before confirmation.
+Official model capability and route verification are separate layers. Official xAI capability includes 1–7 `reference_images`, optional preset `reference_audios` entries with `<AUDIO_n>` tokens, a maximum 15-second duration, and an output audio track. Ordinary Skill speech uses dialogue/VO plus natural-language delivery direction in the prompt and does not require preset audio references. The same prompt-native audio block also requests action-synced SFX, scene ambience, an optional original instrumental score, and mix priority. Two saved MikuAPI paid outputs requested 15 seconds but returned about 10.042 seconds, so that relay now keeps the official/request maximum of 15 seconds but uses 10 seconds as its verified reliable planning ceiling. This is route evidence, not a claim that the official model is limited to 10 seconds. An audio track alone proves neither intelligible speech nor the requested non-speech layers.
+
+## Capability Evidence Layers
+
+| Layer | What it proves | What it does not prove |
+|---|---|---|
+| Official xAI capability | field names, reference limits, preset-voice conditioning, duration and resolution | that a relay exposes every feature correctly |
+| Static route configuration | payload builder, optional preset allowlist and offline limits | that an optional preset works through a relay |
+| Free same-route readiness | current credential/network can see the video model through `GET /v1/models` | that a paid generation will produce intelligible speech |
+| Optional voice diagnostic | a route happens to expose `GET /v1/tts/voices` | required availability for prompt-native speech |
+| Real output review | actual duration, image adherence, speech clarity, audible SFX/ambience/music and selling meaning | general compatibility beyond that saved task |
+
+Preset voice input is `voice-conditioned speech`: it guides the native voice produced with the video. It is not a contract for phoneme-exact or frame-exact lip sync. A visible talking presenter may be directed, but exact mouth timing must never be promised.
+
+## xAI Mode Boundary
+
+- Image-to-video: raw REST field `image`; exactly one still becomes the first frame.
+- Reference-to-video: raw REST field `reference_images`; 1–7 images guide identity and style but do not force the first frame.
+- Python SDK: the equivalent reference argument is `reference_image_urls`.
+- Raw REST requests must never mix `image` with `reference_images`.
+
+The default MikuAPI `grok_video_15_reference` route and optional official `grok_video_15_reference_xai` route both use `reference_images` objects. The current adapter binds zero-based tags `<IMAGE_0>`…`<IMAGE_6>` from payload order. xAI's documentation currently contains both a zero-based token statement and a one-based-looking example, so numbering is recorded as a route contract with `reference_index_contract_source`, not presented as a universal official fact. The preserved `grok_video_15` MikuAPI route uses one `image.url` object and no multi-reference payload.
+
+Generic xAI video documentation describes Video Extension, but this Skill has not verified an extension contract for Grok Imagine Video 1.5 Reference-to-Video through MikuAPI. `supports_video_extension=false` therefore keeps extension out of production planning; do not infer support from the generic feature page or add a paid continuation request.
 
 ## Planning Rules
 
-Use the selected model to decide how many reference images to generate and upload:
+- Prefer the default MikuAPI relay route when its 10-second reliable planning units and exact paid count suit the project. A 15-second delivery currently becomes `10+5`. Select `grok_video_15_reference_xai` only when the user intentionally wants the official direct endpoint, has configured its separate key, and approves its separate route contract.
+- Treat seven as a ceiling. Prefer product master + Hook keyframe + Proof/Payoff keyframe, then add a single-purpose identity, scene, or action control only when needed.
+- Treat every supplied product/person/scene/detail image as evidence only. Generate `<IMAGE_0>` as the faithful professional product master, then generate only necessary later single-purpose controls.
+- Add `product_detail` only when a second view, texture, label, mechanism, interface, or control must be accurate.
+- Add `presenter` and optionally `wardrobe` when a visible seller is useful. Add `scene` for spatial and lighting consistency. Add `style` only for finish.
+- Freeze `talent_presence` separately from `voice_gender`. Product-only means explicitly no visible human; hands-only forbids a face/body/presenter; a visible female/male presenter requires a matching generated presenter control on the default R2V route and a no-gender-substitution instruction.
+- A storyboard/contact sheet is a human-review preview, not an element reference on the default multi-reference route. For exact shot-start control, use separately approved per-segment Image-to-Video keyframes.
+- Use the preserved Miku single-image route only when one approved first frame genuinely contains everything needed. For multiple legacy clips, use approved `per_segment_source_frames` and stitch.
+- The optional 119337 adapter uses only `AI_COMMERCE_VIDEO_119337_KEY` or its dedicated Keychain service. Never reuse a MikuAPI, xAI, Yunwu, or generic gateway credential for that host.
+- Follow each optional provider's own reference field, prompt-token convention, durations, authentication, and response mapping.
 
-- If the selected model is `grok-video-1.5`, plan a single final video source image. This image must contain the approved product, presenter when needed, scene, and composition. Generate it only after the user approves the plan, then ask for image approval before video generation. Do not show the user a multi-reference upload plan for this model.
-- If the selected model is `grok-video-1.5` and the approved ad has scene changes, do not upload a storyboard sheet as the one image. Generate one approved source/first-frame image per segment and use `--reference-strategy per_segment_source_frames` with repeated `--segment-source-image shot_XX=<path>` entries, then stitch the clips.
-- If the selected model is `grok-image-video` and the request benefits from multiple references, plan product, presenter, scene, storyboard, product-detail, or style references as needed. If the user provided only product + model images, normally add at least one generated scene, storyboard, product-detail, style, or campaign-preview reference after plan approval, up to the 7-image limit. Keep multi-reference segments at 10 seconds or less.
-- If the selected model is `seedance2`, prefer `multi_reference_storyboard` for story or scene-change ads: upload product, presenter, scene, and storyboard references within `max_reference_images`, cite the references as `@Image1`, `@Image2`, etc., and cite the storyboard token as shot rhythm/order guidance only.
-- If a future configured model supports more images, follow `max_reference_images`, `reference_field`, `reference_payload_format`, and duration limits in `model-config.example.json`.
-- If a future configured model supports text-to-video only, create a text-only plan and do not invent image uploads.
-- Use `model_capability_contract` in `generation-plan.json` to record `supports_audio`, `supports_lip_sync`, `supports_multi_segment_generation`, `source_image_field`, `reference_field`, `reference_payload_format`, `max_reference_images`, duration limits, `prompt_budget_chars`, `max_prompt_chars`, and the prompt compiler version. Platform validation should read this contract/config instead of hardcoding model behavior.
+## Prompt Compiler
 
-## 119337 Request Mapping
+Director compiler `director-commerce-v8` and architecture `universal-product-director-v4` use one category-agnostic product director profile plus proposition, audience tension, visual proof, big idea, emotional arc, talent role and sound strategy. They send one compact `Cuts` timeline for montage or one `Sequence` timeline for a continuous shot, the visual direction, concise strategy/proof, canonical compact reference map, product/fact lock, and exactly one final `AUDIO` block. Every timeline beat contains its complete synchronized sound-on-action cue; the AUDIO block links those cues and preserves the clip's signature SFX, ambience, music and mix. Planning, compliance, image QC, and billing detail remains in JSON. Freeform input cannot own `Cuts`, `Sequence`, `Reference image map`, `AUDIO`, or manual image-token bindings.
 
-Use provider fields:
+For xAI reference-to-video, write a compact time-coded prompt that:
 
-- duration field: `seconds`;
-- preferred image field: `image_urls`;
-- image value format: HTTPS URL or complete base64 data URL;
-- create response task ID: `data.task_id`;
-- poll success video URL: `data.result_url`;
-- poll failure reason: `data.fail_reason`.
+1. lets the compiler assign every `<IMAGE_n>` exactly one role from frozen payload order; freeform prompts must not contain manual image tokens;
+2. maps 1–4 duration-appropriate, semantically complete commercial beats into each route-legal request; use one 15-second request only on a route whose reliable planning ceiling is 15 seconds;
+3. records commercial job, entry/action/exit state, framing, one dominant camera move, focus, light/physical response and a motivated edit; independent requests never share fragments of the same action;
+4. includes approved dialogue exactly once or explicitly requests no dialogue;
+5. preserves product facts and forbids newly generated written elements.
 
-Do not send old OpenAI/xAI-style fields such as `duration`, `image: {url: ...}`, or `video.url` as the primary 119337 path.
+The sound design has three explicit modes. `layered_native` is the normal commercial default and requires a sonic idea, time-aligned visible-action cues, ambience, restrained original instrumental music, an energy curve and mix hierarchy. `ambience_led` is an intentional no-music direction that still requires SFX and ambience. `voice_only` is allowed only when explicitly selected. The compiler keeps the full timed cues beside the visible actions and uses the one `AUDIO` block for clip-level sound identity and mix. Validators reject incomplete cue coverage and cross-request shorthand such as “same as previous” or “沿用上一段”. After generation, human or multimodal listening must verify each required layer and the mix balance.
 
-## Seedance 2.0 fal Request Mapping
+Native audio generation is prompt-directed best-effort, not a guaranteed layer renderer. Independent video requests share no audio state, so each clip must restate the same concrete sonic fingerprint instead of referring to a previous clip. This may create a coherent edit, but it cannot guarantee identical melody, timbre, loudness, or room tone. Exact score continuity requires a separately approved local post-production music/mix layer.
 
-Use provider fields from `model-config.example.json`:
+When approved speech exists, the default plan uses `voice_policy=prompt_native`, keeps `preset_voice_ids=[]`, sends no `reference_audios`, and writes the dialogue/VO plus voice delivery description exactly once in `AUDIO`. A Provider preset is optional only after an explicit user choice; then the payload may send `reference_audios` and matching `<AUDIO_n>` tokens. `/v1/tts/voices` is diagnostic information, not a paid-submission gate for prompt-native speech.
 
-- auth env var: `FAL_KEY`;
-- auth scheme: `Key`;
-- create endpoint: `/bytedance/seedance-2.0/reference-to-video`;
-- status endpoint: `/bytedance/seedance-2.0/reference-to-video/requests/{request_id}/status`;
-- result endpoint: `/bytedance/seedance-2.0/reference-to-video/requests/{request_id}/response`;
-- duration field: `duration`;
-- reference image field: `image_urls`;
-- reference token style: `@Image1`, `@Image2`, etc.;
-- submit response: `request_id`, `status_url`, `response_url`;
-- poll success status: `COMPLETED`;
-- result video URL: `video.url`.
+No xAI source checked by this project publishes a universal 4096-character video-prompt maximum. `provider_documented_max_prompt_chars=null`, `adapter_max_prompt_chars=4096`, and `workflow_prompt_budget_chars=3000` separate official evidence from internal protection. Legacy `max_prompt_chars` and `prompt_budget_chars` remain compatibility aliases. Rewrite the visual direction or simplify the reference set when required content does not fit the internal route budget; never truncate approved dialogue or identity rules. For 11–15 second ads, 1300–2400 characters is a useful internal target rather than a hard requirement. The compiler reports creative/reference/guardrail/audio ratios so a long reference map or policy block cannot silently crowd out directing information.
 
-Do not send the 119337/Grok-specific `model` or `seconds` fields to the fal Seedance route.
+## Duration and Paid Count
 
-## Duration Splitting
+Use only configured legal durations and the selected route's `planning_max_duration_seconds`. For the current MikuAPI R2V route, 15 seconds is `10+5`; for official xAI R2V, the documented 15-second capability remains one request. Longer deliveries use the minimum legal request count and local stitching for that route. Examples on official xAI:
 
-The official xAI API currently documents a general 1-15 second duration range for its native route. This skill uses a configured Provider-compatible route, so production requests must follow the stricter local `allowed_duration_seconds` contract until that Provider route is deliberately revalidated. Do not confuse the official model family with a gateway alias or assume their request schema, allowed values, or billing are identical.
+- 25s: `15+10`;
+- 30s: `15+15`;
+- 45s: `15+15+15`.
 
-If requested duration is longer than the selected model or selected image mode supports:
+Every planned request is submitted once. Repair reserve and automatic replacement requests remain zero. A single R2V request can follow time-coded beats, but its cut points remain generative rather than frame-exact. Independent clips used for longer deliveries can be edited coherently but cannot be promised as a seamless one-take or a shared native audio session. Each semantic beat belongs to one request; every clip restates the full sonic fingerprint, and edit boundaries carry a stable exit, continuity entry, cut motivation and audio bridge, followed by visual, sound-continuity and loudness review after stitching.
 
-1. Select only request values listed in `allowed_duration_seconds` or `allowed_multi_reference_duration_seconds`.
-2. Use the minimum paid request count; exact delivery sum wins, otherwise use the smallest legal overshoot.
-3. Split the approved spoken script into complete sentences and store a unique `spoken_script` for every segment.
-4. Use one campaign-level visual bible and intentional `planned_cut` continuity.
-5. Save each segment prompt separately and forbid all Provider-generated written overlays.
-6. Stitch only after every generated MP4 is verified. Normalize speech audio to PCM intermediates, apply no fades/crossfades, and encode AAC once at the end.
-7. Trim only a verified silent/idle tail. Never cut a spoken word.
+## Model Choice
 
-Examples:
-
-- `grok-video-1.5`, 15s, one image -> one 15s clip.
-- `grok-video-1.5`, user wants model + product + scene -> first plan one composite source image, generate it after plan approval, confirm it, then create one 15s clip.
-- `grok-video-1.5`, 25s delivery -> two paid clips using legal slots `15s + 10s`.
-- `grok-video-1.5`, 30s delivery -> two paid clips using legal slots `15s + 15s`.
-- `grok-image-video`, 15s, one image -> one 15s clip.
-- `grok-image-video`, multi-reference 15s delivery -> legal minimum-count plan `10s + 6s`; review and locally trim only the verified idle tail to 15s.
-- `seedance2`, product + presenter + scene + 6-grid storyboard, 15s -> one 15s multi-reference storyboard request if the configured provider supports it.
-- 45s on a 15s route -> three clips, 15s + 15s + 15s.
-
-The configured Grok legal slots are `4, 6, 8, 10, 12, 15`. Never send 5s, 7s, 13s, or another arbitrary value unless a selected model config explicitly lists it.
-
-## Model Choice Rules
-
-- Use the configured default `grok-video-1.5` when one final approved source image is enough.
-- Use `grok-image-video` when text-to-video or multiple reference images are genuinely needed.
-- Use `seedance2` when the user has `FAL_KEY` configured and the ad needs multi-reference storyboard control without forcing a multi-clip Grok workflow.
-- If only a product image is provided but the ad needs a presenter and the selected model is single-image only, plan a composite presenter-product source image and generate it with Codex `imagegen` after plan approval.
-- If a single-image model is selected but the storyboard requires scene changes, switch to per-segment source frames rather than using a storyboard sheet as the only source image.
-- If product and model images are already provided, still plan the video-facing approval image(s): one composite `video_source` for single-image routes, or at least one generated scene/storyboard/campaign-preview reference for multi-reference routes when capacity allows.
-- If a user asks for multiple reference control, switch to a configured model that supports multi-reference images, such as `grok-image-video` or `seedance2`, before generating the final video.
-- If the user asks for a real identifiable person, require clear permission and avoid face cloning by default. Prefer synthetic digital-human references.
+- Default: `grok_video_15_reference` for MikuAPI-relayed 1–7 image reference-to-video.
+- Optional direct: `grok_video_15_reference_xai` for the same model contract through official xAI.
+- Compatibility: `grok_video_15` for the verified MikuAPI single-first-frame contract.
+- Optional third-party: use `grok_image_video` or `seedance2` only when explicitly selected and configured.
+- If a real identifiable person is requested, require clear permission; prefer synthetic presenters by default.

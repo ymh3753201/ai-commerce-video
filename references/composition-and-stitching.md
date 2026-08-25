@@ -32,7 +32,7 @@ For videos with generated speech:
 - stitch only at script boundaries marked `stitch_safe=true`;
 - inspect silence/freeze reports around every boundary before delivery.
 
-The goal is a clean planned cut. It does not promise seamless voice identity or room tone across independent model requests.
+The goal is a clean planned cut. Independent model requests share no native audio memory, so each request must already restate its full music palette, rhythm, texture, ambience, signature SFX and mix. The stitcher preserves the returned tracks; it cannot create missing sound layers or make independently generated music identical. Exact score continuity requires a separately approved local post-production mix.
 
 For vertical ads, prefer:
 

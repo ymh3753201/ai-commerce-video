@@ -35,7 +35,7 @@ Before image generation, include in the plan:
 5. Disclaimer area when needed.
 6. Which generated image will be checked for safe-zone compliance.
 
-After image generation, ask the user to confirm:
+In Stage 1, include the safe-zone-aware composition in the visual plan. In Stage 2, make the following visible enough for final authorization; do not create a third safe-zone approval step:
 
 1. Product is not hidden by captions.
 2. Price/offer/CTA is readable.
