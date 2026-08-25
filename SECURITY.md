@@ -10,15 +10,29 @@ Use:
 ~/.codex/ai-commerce-video.env
 ```
 
-The setup script creates this file with owner-only permissions.
+On macOS, the default setup stores the MikuAPI key in Keychain service
+`ai-commerce-video-mikuapi-video` and creates this owner-only file for the
+non-secret MikuAPI base URL and model settings. CI systems should inject
+`AI_COMMERCE_VIDEO_MIKUAPI_KEY` through their secret manager. Use
+`setup_private_env.py --route xai-reference` only when intentionally configuring
+the optional official route; it uses the separate `ai-commerce-video-xai-video`
+Keychain service and `XAI_API_KEY`.
 
 ## Provider Trust
 
-The bundled `119337` route is a third-party gateway, not an xAI-operated service. Review a provider's privacy, billing, retention, moderation, and account-security terms before uploading product images or credentials.
+The default route calls MikuAPI, a third-party relay rather than an xAI-operated
+service. The optional `119337` route is also a third-party gateway. Review a
+provider's privacy, billing, retention, moderation, and account-security terms
+before uploading product images or credentials.
 
 Do not reuse a credential issued for one provider on another provider's host.
 
-The bundled `119337` model entries accept only `AI_COMMERCE_VIDEO_API_KEY` or `YUNWU_API_KEY`. They deliberately exclude `XAI_API_KEY` to prevent accidental credential forwarding.
+The default and single-image MikuAPI entries accept only
+`AI_COMMERCE_VIDEO_MIKUAPI_KEY` or their MikuAPI Keychain service. The optional
+official xAI entry accepts only `XAI_API_KEY` or its dedicated Keychain service. The optional `119337`
+entry accepts only `AI_COMMERCE_VIDEO_119337_KEY` or Keychain service
+`ai-commerce-video-119337-video`. All third-party routes
+deliberately exclude `XAI_API_KEY` to prevent accidental credential forwarding.
 
 ## Reporting a Vulnerability
 

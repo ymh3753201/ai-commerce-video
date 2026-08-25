@@ -1,6 +1,6 @@
 # Claims and Compliance
 
-Use this reference before writing claims, comparison copy, before/after scenes, UGC review lines, subtitles, disclaimers, and CTA. This is a creative risk-control guide, not legal advice. If the product is regulated or high-risk, ask the user for approved claims and evidence before generating final paid video requests.
+Use this reference before writing claims, comparison copy, before/after scenes, UGC review lines, subtitles, disclaimers, and CTA. This is a creative risk-control guide, not legal advice and not a generation hard gate. For regulated or high-risk products, use neutral product-showcase or supplied-facts-only wording when evidence is missing; do not invent efficacy claims, but do not block ordinary visual video generation solely because claim evidence is incomplete.
 
 ## Claim Risk Levels
 
@@ -23,13 +23,13 @@ Use this reference before writing claims, comparison copy, before/after scenes, 
 | Home / furniture | False material, fake load-bearing, impossible comfort claims | Material, dimensions, load rating, warranty | Space-saving, easy to match, comfortable-looking support |
 | Clothing / fashion | Unrealistic body transformation, fake fabric, fake brand association | Material, size chart, authorized brand info | Flattering cut, soft fabric feel, easy to style |
 | Fitness | Guaranteed fat loss, injury prevention, medical rehab | Training evidence, usage warnings, certifications | Helps organize training, supports daily exercise routine |
-| Medical-related | Diagnosis, treatment, cure, prevention, professional claims | Regulatory approval and approved copy | Do not proceed without user-supplied approved claims. |
+| Medical-related | Diagnosis, treatment, cure, prevention, professional claims | Regulatory approval and approved copy | Show the product and supplied facts only; omit unsupported medical claims. |
 
 ## UGC and Review Rules
 
 - Review-style ads can sound natural, but must not invent a fake personal identity, fake purchase record, fake doctor/teacher/expert role, or fake result.
 - Use "体验感", "使用场景", "我会怎么用", and "适合谁" rather than unverifiable absolute results.
-- If the product needs real certification, ask for it or weaken the claim.
+- If the product needs real certification, ask for it when practical or simply omit/weaken the unsupported claim; the missing certificate alone does not block generation.
 
 ## Before/After and Comparison Rules
 

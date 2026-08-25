@@ -51,6 +51,8 @@ def plan_duration(
     allowed_slots: Iterable[int],
     max_seconds: int | None = None,
     forced_count: int | None = None,
+    allow_extra_count: bool = False,
+    preferred_sequence: list[int] | None = None,
 ) -> list[int]:
     """Return the minimum-count legal request slots covering the delivery target.
 
@@ -69,7 +71,16 @@ def plan_duration(
         raise ScriptError(
             f"{count} segment(s) cannot cover a {target}s delivery with a {max_slot}s model maximum"
         )
-    if count > minimum_count and forced_count is not None:
+    if preferred_sequence is not None:
+        preferred = [int(value) for value in preferred_sequence]
+        if forced_count is not None and len(preferred) != count:
+            raise ScriptError("preferred_sequence length must match forced_count")
+        if any(value not in slots for value in preferred):
+            raise ScriptError(f"preferred_sequence contains an illegal duration; legal slots are {sorted(slots)}")
+        if sum(preferred) < target:
+            raise ScriptError(f"preferred_sequence totals {sum(preferred)}s and cannot cover a {target}s delivery")
+        return preferred
+    if count > minimum_count and forced_count is not None and not allow_extra_count:
         raise ScriptError(
             f"{count} segment source images would create extra paid requests; "
             f"the minimum safe request count for {target}s is {minimum_count}. "
@@ -90,6 +101,8 @@ def estimate_spoken_seconds(text: str, language: str = "zh") -> float:
         return 0.0
     if (language or "").lower().startswith(("zh", "ja", "ko")) or re.search(r"[\u3400-\u9fff]", clean):
         visible = len(re.sub(r"\s|[，。！？、；：,.!?;:]", "", clean))
+        # Keep this estimator conservative enough to catch obvious overruns
+        # while allowing the separately reviewed 38-48 character 15s design band.
         return round(max(1.0, visible / 4.2), 2)
     words = len(re.findall(r"\b\w+\b", clean))
     return round(max(1.0, words / 2.6), 2)
@@ -197,12 +210,16 @@ def build_duration_plan(
     language: str = "zh",
     max_seconds: int | None = None,
     forced_count: int | None = None,
+    allow_extra_count: bool = False,
+    preferred_sequence: list[int] | None = None,
 ) -> tuple[dict, list[str]]:
     request_durations = plan_duration(
         delivery_max_seconds,
         allowed_slots,
         max_seconds=max_seconds,
         forced_count=forced_count,
+        allow_extra_count=allow_extra_count,
+        preferred_sequence=preferred_sequence,
     )
     scripts = split_script_by_duration(script_text, request_durations, language=language)
     estimated = estimate_spoken_seconds(script_text, language=language)
@@ -226,7 +243,7 @@ def build_duration_plan(
         "target_fill_ratio": round(estimated / max(int(delivery_max_seconds), 1), 4),
         "allowed_duration_seconds": sorted(normalize_allowed_slots(allowed_slots, max_seconds=max_seconds)),
         "tail_trim_policy": "verified_idle_tail_only",
-        "speech_capacity_rule": "Plan speech below about 14.2s inside a 15s request; never cut a word.",
+        "speech_capacity_rule": "For a 15s Mandarin ad, target about 38-48 visible Chinese characters, then keep each clip below its measured safe speech capacity; never cut a word.",
     }
     payload["duration_plan_digest"] = canonical_digest(payload)
     return payload, scripts

@@ -12,12 +12,29 @@ from subtitle_policy import enabled_subtitle_contract_errors
 
 
 CLEAN_VISUAL_FIELDS = {
+    "video_complete_and_coherent": "The complete video and its joins were not verified as coherent",
+    "source_frame_consistency": "Overall consistency with the approved reference frames was not verified",
     "approved_product_identity": "Approved product identity was not verified",
-    "approved_product_text_integrity": "Approved product packaging text integrity was not verified",
-    "no_generated_text": "Generated text was detected or not verified on the clean Provider output",
-    "no_unapproved_visual_insert": "Unapproved visual insert was detected or not verified",
-    "spoken_content_complete": "Spoken content completeness was not verified",
-    "critical_facts_exact": "Critical product facts, price, offer, or CTA were not verified as exact",
+    "presenter_identity_consistency": "Presenter identity consistency with the approved reference was not verified",
+    "presenter_outfit_consistency": "Presenter outfit consistency with the approved reference was not verified",
+    "scene_composition_consistency": "Scene and composition consistency with the approved reference was not verified",
+    "speech_intelligible": "Speech intelligibility was not verified",
+    "speech_meaning_preserved": "The approved selling meaning was not approximately preserved",
+}
+TALENT_VISUAL_FIELDS = {
+    "unexpected_person_absent": "A person, face, body, hand, or human silhouette appeared against the approved product-only plan",
+    "hands_only_boundary_preserved": "The approved hands-only boundary was not preserved",
+    "unexpected_presenter_absent": "A presenter appeared in an approved hands-only plan",
+    "talent_presence_matches_plan": "Visible talent presence does not match the approved plan",
+    "talent_gender_matches_plan": "Visible presenter gender does not match the explicitly approved plan",
+    "voice_gender_matches_plan": "Generated voice gender does not match the explicitly approved voice direction",
+}
+SOUND_VISUAL_FIELDS = {
+    "planned_sfx_audible": "The planned commercial sound effects were not verified as audible",
+    "planned_ambience_audible": "The planned scene ambience was not verified as audible",
+    "planned_music_audible": "The planned original background music was not verified as audible",
+    "non_speech_sound_supports_story": "The required non-speech sound design was not verified as supporting the commercial story",
+    "audio_mix_balanced": "The audio mix of voice, sound effects, ambience, and music was not verified as balanced",
 }
 CAPTION_VISUAL_FIELDS = {
     "subtitle_present": "Captioned delivery does not verify subtitle presence",
@@ -74,12 +91,66 @@ def delivery_errors(
         errors.append("Technical review status is not pass")
     if technical_review.get("delivery_duration_hard_limit_pass") is not True:
         errors.append("Final delivery exceeds or does not verify the hard duration limit")
+    if int(plan.get("plan_schema_version") or 1) >= 2 and technical_review.get("provider_duration_shortfall_pass") is not True:
+        errors.append("Provider clip duration is too short; long static padding cannot be used to claim a complete ad")
 
     if clean_visual_review.get("status") not in {"pass", "pass_with_notes"}:
         errors.append("Clean visual review status is not pass/pass_with_notes")
-    for field, message in CLEAN_VISUAL_FIELDS.items():
+    speech_required = bool((plan.get("audio_contract") or {}).get("speech_required"))
+    schema_v2 = int(plan.get("plan_schema_version") or 1) >= 2
+    talent = ((plan.get("creative_contract") or {}).get("talent_contract") or {})
+    talent_presence = str(talent.get("presence") or "none")
+    required_visual_fields = dict(CLEAN_VISUAL_FIELDS)
+    if schema_v2:
+        required_visual_fields.pop("presenter_identity_consistency", None)
+        required_visual_fields.pop("presenter_outfit_consistency", None)
+        if talent_presence == "none":
+            required_visual_fields["unexpected_person_absent"] = TALENT_VISUAL_FIELDS["unexpected_person_absent"]
+        elif talent_presence == "hands_only":
+            required_visual_fields["hands_only_boundary_preserved"] = TALENT_VISUAL_FIELDS["hands_only_boundary_preserved"]
+            required_visual_fields["unexpected_presenter_absent"] = TALENT_VISUAL_FIELDS["unexpected_presenter_absent"]
+        elif talent_presence == "presenter":
+            required_visual_fields["presenter_identity_consistency"] = CLEAN_VISUAL_FIELDS["presenter_identity_consistency"]
+            required_visual_fields["presenter_outfit_consistency"] = CLEAN_VISUAL_FIELDS["presenter_outfit_consistency"]
+            required_visual_fields["talent_presence_matches_plan"] = TALENT_VISUAL_FIELDS["talent_presence_matches_plan"]
+            if talent.get("gender") in {"female", "male"}:
+                required_visual_fields["talent_gender_matches_plan"] = TALENT_VISUAL_FIELDS["talent_gender_matches_plan"]
+        audio = plan.get("audio_contract") or {}
+        if speech_required and audio.get("voice_gender") in {"female", "male"}:
+            required_visual_fields["voice_gender_matches_plan"] = TALENT_VISUAL_FIELDS["voice_gender_matches_plan"]
+        sound = plan.get("sound_design_contract") or {}
+        if sound.get("verification_required") and sound.get("non_speech_required"):
+            required_layers = sound.get("required_layers") or {}
+            if required_layers.get("sfx"):
+                required_visual_fields["planned_sfx_audible"] = SOUND_VISUAL_FIELDS["planned_sfx_audible"]
+            if required_layers.get("ambience"):
+                required_visual_fields["planned_ambience_audible"] = SOUND_VISUAL_FIELDS["planned_ambience_audible"]
+            if required_layers.get("music"):
+                required_visual_fields["planned_music_audible"] = SOUND_VISUAL_FIELDS["planned_music_audible"]
+            required_visual_fields["non_speech_sound_supports_story"] = SOUND_VISUAL_FIELDS["non_speech_sound_supports_story"]
+            required_visual_fields["audio_mix_balanced"] = SOUND_VISUAL_FIELDS["audio_mix_balanced"]
+    for field, message in required_visual_fields.items():
+        if field in {"speech_intelligible", "speech_meaning_preserved"} and int(plan.get("plan_schema_version") or 1) >= 2 and not speech_required:
+            continue
         if clean_visual_review.get(field) is not True:
             errors.append(message)
+    if speech_required and (
+        clean_visual_review.get("speech_intelligible") is not True
+        or clean_visual_review.get("speech_meaning_preserved") is not True
+    ):
+        errors.append("Planned speech is missing, unintelligible, or does not preserve the approved selling meaning; visual review must be blocked")
+    sound = plan.get("sound_design_contract") or {}
+    if sound.get("verification_required") and sound.get("non_speech_required"):
+        sound_fields = [
+            field
+            for field in ("planned_sfx_audible", "planned_ambience_audible", "planned_music_audible")
+            if (sound.get("required_layers") or {}).get(field.removeprefix("planned_").removesuffix("_audible"))
+        ]
+        sound_fields.extend(["non_speech_sound_supports_story", "audio_mix_balanced"])
+        if any(clean_visual_review.get(field) is not True for field in sound_fields):
+            errors.append(
+                "Planned commercial sound design is missing or unbalanced; visual review must be blocked and no automatic paid retry is allowed"
+            )
 
     subtitle_plan = plan.get("subtitle_plan") or {}
     if subtitle_plan.get("enabled"):

@@ -7,29 +7,45 @@ Use this reference after every generated clip is downloaded. A playable MP4 is n
 - Every planned shot has one verified job and exactly one paid submission attempt.
 - Every expected clip exists, passes ffprobe, and matches its request ID and SHA-256 record.
 - No shot is silently replaced, skipped, or resubmitted.
+- `provider_trace` records gateway/upstream task IDs, channel ID when available, returned-prompt match, input receipt status, and downloaded video hash.
 
 ## 2. Clean Technical Review
 
+`review_render.py` writes a legacy top-level `status` for compatibility, but its scope is explicitly `review_scope=technical_media_only`. Read `technical_status` for media checks, `delivery_status` for the next workflow state, and `formal_delivery_approved=false` until all business gates pass. A technical `status=pass` must never be presented as finished-ad acceptance.
+
 - Final duration stays within `delivery_max_seconds` plus the small probe tolerance.
+- Compare each downloaded Provider clip with its approved request duration. A shortfall over one second blocks delivery; do not extend a 5–10 second result to 15 seconds with a long frozen last frame. The only normal end hold is about one second.
 - Resolution, aspect ratio, frame rate, codecs, and audio stream match the delivery plan.
 - Multi-clip output has a stitch report proving PCM intermediate audio, no per-clip fade, no crossfade, and one final AAC encode.
 - Inspect reported silence and freeze regions, especially around every clip boundary.
 - Spoken sentences are complete at each boundary; no syllable, number, unit, or CTA is cut.
 
+The report's `sound_signal_screening` is a no-cost warning based on detected silence and the plan's expected continuous sound bed. It can flag `QC_SOUND_DESIGN_MISSING` as a candidate when long silence conflicts with the plan, but it is not speech recognition, source separation, or a listening verdict. It must never turn `planned_sfx_audible`, `planned_ambience_audible`, `planned_music_audible`, or `audio_mix_balanced` true by itself.
+
 ## 3. Clean Multimodal Business Review
 
-Codex must inspect the clean video and record:
+Codex must inspect the clean video and record these practical pass fields:
 
 - `video_sha256` matching the exact clean MP4 reviewed;
-- approved product identity is preserved;
-- packaging, label, logo, color, shape, and key details have not drifted;
-- no accidental generated text appears anywhere;
-- no unapproved person, object, product variant, scene, or visual claim appears;
-- spoken content is complete and understandable;
-- price, offer, SKU, specifications, claims, disclaimer needs, and CTA are exact;
-- platform framing and product exposure support conversion.
+- `video_complete_and_coherent=true`: all planned segments are present and joins feel reasonable;
+- `source_frame_consistency=true`: the output broadly follows the approved source/reference images;
+- `approved_product_identity=true`: the intended product remains recognizable;
+- for `talent_presence=none`, `unexpected_person_absent=true`: no person, face, body, hand, or human silhouette appears;
+- for `talent_presence=hands_only`, `hands_only_boundary_preserved=true` and `unexpected_presenter_absent=true`;
+- `presenter_identity_consistency=true` and `presenter_outfit_consistency=true` when a presenter is used;
+- `talent_presence_matches_plan=true`, and `talent_gender_matches_plan=true` when female/male presenter gender was explicitly approved;
+- `scene_composition_consistency=true`: scene and framing broadly match the approved reference/storyboard;
+- when speech was planned, `speech_intelligible=true`: an effective speech interval exists and local transcription or human listening confirms it is understandable;
+- when speech was planned, `speech_meaning_preserved=true`: the main selling meaning is approximately preserved.
+- when female/male voice direction was explicit, `voice_gender_matches_plan=true`.
 
-Do not approve a clean output merely because it can play.
+An AAC stream, music, ambience, or sound effects do not prove speech. If planned speech is missing, unintelligible, or loses the selling meaning, record visual review `status=blocked`; do not use `pass_with_notes`. Missing local transcription tooling may be a generation warning, but it blocks formal delivery until human listening or another valid speech check is completed.
+
+Speech and non-speech sound are separate acceptance layers. When `sound_design_contract.verification_required=true`, listen for every required layer and record `planned_sfx_audible`, `planned_ambience_audible`, optional `planned_music_audible`, `non_speech_sound_supports_story`, and `audio_mix_balanced`. The presence of an AAC stream cannot set any of these fields to true. Missing planned layers use `QC_SOUND_DESIGN_MISSING`; an unusable balance between voice and soundscape uses `QC_AUDIO_MIX_FAILURE`. Either condition blocks formal delivery and never authorizes an automatic paid retry.
+
+Do not require word-for-word script reproduction. Packaging lettering, incidental generated text, exact price/offer/CTA/disclaimer wording, silence/freeze detections, or minor visual/timing changes are review notes unless they make the video incomplete, incoherent, misleading, or unusable.
+
+Do not approve a clean output merely because it can play. `jobs.json.state=verified` means technical media verification only; until this business review passes, workflow status is `awaiting_business_review`.
 
 ## 4. Caption Review
 
@@ -43,9 +59,31 @@ When subtitles are enabled, review the clean master first, then the separately b
 - current plan, duration plan, paid job ledger, and final confirmation still match the frozen production-contract digests;
 - every job is verified with exactly one paid submission;
 - clean technical review passes;
+- every Provider clip is within the allowed one-second duration shortfall;
 - clean multimodal business review passes;
 - caption review passes when subtitles are enabled;
 - technical, clean-visual, and optional caption reviews are bound to the exact clean/captioned MP4 SHA-256 values;
 - the chosen final MP4 exists and has a recorded hash.
 
 If any item fails, keep `finalize-report.json.status=blocked`; do not claim final delivery and do not automatically purchase a repair generation.
+
+## 6. Failure Codes and Minimum Repair Scope
+
+Record one or more explicit codes instead of writing only “画面不好”：
+
+| Code | Failure | Minimum repair target |
+|---|---|---|
+| `QC_PRODUCT_DRIFT` | Product geometry, color, packaging, logo, or marks drift | clean/replace the product anchor or regenerate only the affected clip |
+| `QC_CAMERA_MOVE_CONFLICT` | A clip contains competing main camera moves or motion confusion | rewrite and regenerate only that clip |
+| `QC_REFERENCE_CONTAMINATION` | Grid, arrows, labels, duplicate subjects, or polluted reference content appears | regenerate the polluted support plate and affected clip |
+| `QC_SPEECH_OVERRUN` | Dialogue runs past the clip, clips a word, or crosses a cut | shorten/re-time that clip's script and AUDIO block |
+| `QC_HAND_ANATOMY` | Extra/fused fingers or hand-product intersection | replace the hand-action plate and affected clip |
+| `QC_CTA_UNREADABLE` | Local CTA is unreadable or outside the safe zone | redo local packaging only; do not regenerate video |
+| `QC_DURATION_SHORTFALL` | Provider clip is over one second shorter than approved | block delivery; never use long frozen padding |
+| `QC_SPEECH_MISSING` | Planned speech is missing, unintelligible, or loses selling meaning | block delivery and preserve evidence |
+| `QC_TALENT_MISMATCH` | An unexpected human appears, presenter is missing, or approved presenter gender changes | block delivery and inspect talent contract/reference |
+| `QC_VOICE_GENDER_MISMATCH` | Explicit female/male voice direction changes | block delivery and inspect the single AUDIO block |
+| `QC_SOUND_DESIGN_MISSING` | Planned SFX, ambience, or music is absent or inaudible | block delivery and preserve the exact clip/prompt evidence |
+| `QC_AUDIO_MIX_FAILURE` | Voice masks the whole soundscape or the soundscape masks speech | block delivery and inspect the clip-level sound and mix contract |
+
+The code identifies scope; it never authorizes a paid retry. Preserve passed clips and request new paid authorization only for the smallest failed generation unit.

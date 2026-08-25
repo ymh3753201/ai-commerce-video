@@ -17,6 +17,10 @@ FORBIDDEN_SUFFIXES = {".pyc", ".pyo", ".mp4", ".mov", ".webm", ".mkv", ".log"}
 TEXT_SUFFIXES = {".md", ".py", ".json", ".example", ".yml", ".yaml", ".gitignore"}
 SECRET_PATTERNS = {
     "private API key": re.compile(r"\bsk-[A-Za-z0-9_-]{20,}\b"),
+    "GitHub token": re.compile(r"\bgh[pousr]_[A-Za-z0-9]{20,}\b"),
+    "AWS access key": re.compile(r"\bAKIA[0-9A-Z]{16}\b"),
+    "Google API key": re.compile(r"\bAIza[0-9A-Za-z_-]{20,}\b"),
+    "private key block": re.compile(r"-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----"),
     "literal bearer token": re.compile(r"\bBearer\s+[A-Za-z0-9._-]{20,}\b"),
     "developer absolute path": re.compile(r"/(?:Users|Volumes)/[^\s`\"']+"),
 }
@@ -125,7 +129,7 @@ def audit(root: Path) -> dict:
         if "api.119337.xyz" in config_text and "third-party" not in readme:
             errors.append("README must disclose that the bundled 119337 route is third-party")
         if "api.119337.xyz" in config_text:
-            warnings.append("Bundled default provider is a third-party gateway; review before public use")
+            warnings.append("An optional 119337 provider route remains configured; review before public use")
 
     return {
         "ok": not errors,
