@@ -8,6 +8,7 @@ import json
 from pathlib import Path
 
 from _common import ScriptError, canonical_digest, load_json, media_summary, sha256_file, write_json
+from _workflow import delivery_review_policy
 from subtitle_policy import enabled_subtitle_contract_errors
 
 
@@ -57,10 +58,12 @@ def delivery_errors(
     plan: dict,
     jobs: dict,
     technical_review: dict,
-    clean_visual_review: dict,
+    clean_visual_review: dict | None,
     caption_review: dict | None,
 ) -> list[str]:
     errors: list[str] = []
+    clean_visual_review = clean_visual_review or {}
+    strict_business_review = delivery_review_policy(plan) == "strict_business_review"
     shots = plan.get("shots") or []
     production = plan.get("production_contract") or {}
     base_count = int(production.get("base_request_count") or len(shots))
@@ -94,7 +97,7 @@ def delivery_errors(
     if int(plan.get("plan_schema_version") or 1) >= 2 and technical_review.get("provider_duration_shortfall_pass") is not True:
         errors.append("Provider clip duration is too short; long static padding cannot be used to claim a complete ad")
 
-    if clean_visual_review.get("status") not in {"pass", "pass_with_notes"}:
+    if strict_business_review and clean_visual_review.get("status") not in {"pass", "pass_with_notes"}:
         errors.append("Clean visual review status is not pass/pass_with_notes")
     speech_required = bool((plan.get("audio_contract") or {}).get("speech_required"))
     schema_v2 = int(plan.get("plan_schema_version") or 1) >= 2
@@ -129,18 +132,19 @@ def delivery_errors(
                 required_visual_fields["planned_music_audible"] = SOUND_VISUAL_FIELDS["planned_music_audible"]
             required_visual_fields["non_speech_sound_supports_story"] = SOUND_VISUAL_FIELDS["non_speech_sound_supports_story"]
             required_visual_fields["audio_mix_balanced"] = SOUND_VISUAL_FIELDS["audio_mix_balanced"]
-    for field, message in required_visual_fields.items():
-        if field in {"speech_intelligible", "speech_meaning_preserved"} and int(plan.get("plan_schema_version") or 1) >= 2 and not speech_required:
-            continue
-        if clean_visual_review.get(field) is not True:
-            errors.append(message)
-    if speech_required and (
+    if strict_business_review:
+        for field, message in required_visual_fields.items():
+            if field in {"speech_intelligible", "speech_meaning_preserved"} and int(plan.get("plan_schema_version") or 1) >= 2 and not speech_required:
+                continue
+            if clean_visual_review.get(field) is not True:
+                errors.append(message)
+    if strict_business_review and speech_required and (
         clean_visual_review.get("speech_intelligible") is not True
         or clean_visual_review.get("speech_meaning_preserved") is not True
     ):
         errors.append("Planned speech is missing, unintelligible, or does not preserve the approved selling meaning; visual review must be blocked")
     sound = plan.get("sound_design_contract") or {}
-    if sound.get("verification_required") and sound.get("non_speech_required"):
+    if strict_business_review and sound.get("verification_required") and sound.get("non_speech_required"):
         sound_fields = [
             field
             for field in ("planned_sfx_audible", "planned_ambience_audible", "planned_music_audible")
@@ -166,6 +170,30 @@ def delivery_errors(
     return errors
 
 
+def delivery_warnings(plan: dict, clean_visual_review: dict | None) -> list[str]:
+    """Keep optional creative observations visible without blocking a technically valid delivery."""
+    if delivery_review_policy(plan) == "strict_business_review":
+        return []
+    review = clean_visual_review or {}
+    if not review:
+        return ["Optional post-generation visual and listening review was not recorded"]
+    warnings = []
+    if review.get("status") not in {"pass", "pass_with_notes"}:
+        warnings.append("Optional post-generation business review did not pass")
+    for field in planned_optional_review_fields(plan):
+        if review.get(field) is not True:
+            warnings.append(f"Optional review finding not confirmed: {field}")
+    return warnings
+
+
+def planned_optional_review_fields(plan: dict) -> list[str]:
+    fields = list(CLEAN_VISUAL_FIELDS)
+    sound = plan.get("sound_design_contract") or {}
+    if sound.get("non_speech_required"):
+        fields.extend(SOUND_VISUAL_FIELDS)
+    return fields
+
+
 def review_binding_errors(
     subtitles_enabled: bool,
     clean_video_sha256: str,
@@ -173,13 +201,14 @@ def review_binding_errors(
     technical_review: dict,
     clean_visual_review: dict,
     caption_review: dict | None,
+    require_visual_review: bool = True,
 ) -> list[str]:
     errors: list[str] = []
     if not clean_video_sha256:
         errors.append("Clean video hash is missing")
     if technical_review.get("video_sha256") != clean_video_sha256:
         errors.append("Technical review video hash does not match the clean video")
-    if clean_visual_review.get("video_sha256") != clean_video_sha256:
+    if require_visual_review and clean_visual_review.get("video_sha256") != clean_video_sha256:
         errors.append("Clean visual review video hash does not match the clean video")
     if subtitles_enabled:
         if not isinstance(caption_review, dict) or caption_review.get("video_sha256") != final_video_sha256:
@@ -240,11 +269,12 @@ def main() -> int:
         contract = load_json(project_dir / "production-contract.json")
         confirmation = load_json(project_dir / "video-confirmation.json")
         subtitles_enabled = bool((plan.get("subtitle_plan") or {}).get("enabled"))
+        require_visual_review = delivery_review_policy(plan) == "strict_business_review"
         technical_path = project_dir / ("final-review.clean.json" if subtitles_enabled else "final-review.json")
         clean_visual_path = project_dir / ("visual-review.clean.json" if subtitles_enabled else "visual-review.json")
         caption_path = project_dir / "visual-review.json"
         technical = load_json(technical_path)
-        clean_visual = load_json(clean_visual_path)
+        clean_visual = load_json(clean_visual_path) if clean_visual_path.exists() else {}
         caption = load_json(caption_path) if subtitles_enabled and caption_path.exists() else None
         if args.video:
             final_path = Path(args.video).expanduser().resolve()
@@ -256,6 +286,7 @@ def main() -> int:
         clean_path = project_dir / "final.mp4" if subtitles_enabled else final_path
         clean_artifact = artifact_entry(clean_path)
         errors = delivery_errors(plan, jobs, technical, clean_visual, caption)
+        warnings = delivery_warnings(plan, clean_visual)
         errors.extend(contract_binding_errors(plan, jobs, contract, confirmation))
         if not artifact.get("exists"):
             errors.append(f"Final delivery MP4 does not exist: {final_path}")
@@ -269,16 +300,19 @@ def main() -> int:
                 technical,
                 clean_visual,
                 caption,
+                require_visual_review=require_visual_review,
             )
         )
         report = {
             "status": "blocked" if errors else "pass",
             "project_dir": str(project_dir),
             "errors": errors,
+            "warnings": warnings,
+            "delivery_review_policy": delivery_review_policy(plan),
             "final_artifact": artifact,
             "clean_artifact": clean_artifact,
             "technical_review": str(technical_path),
-            "clean_visual_review": str(clean_visual_path),
+            "clean_visual_review": str(clean_visual_path) if clean_visual_path.exists() else "",
             "caption_review": str(caption_path) if subtitles_enabled else "",
             "paid_submission_attempts": sum(int(item.get("submission_attempts") or 0) for item in _job_items(jobs)),
             "approved_paid_cap": int((plan.get("production_contract") or {}).get("approved_paid_cap") or 0),

@@ -97,8 +97,8 @@ Use this sequence for an ordinary request:
 4. Internal contracts: record platform, scene, safe-zone, compliance notes, CTA, and model capability in `generation-plan.json`; do not expand them in the ordinary user-facing proposal unless requested.
 5. AI recommendation: apply the best version by default and explain the reason briefly. If recommending `hybrid`, explain how the hook and direct selling parts are balanced.
 6. Stage 1: show the complete plan, image prompts, reference roles and video-prompt blueprint; wait for approval.
-7. Image preparation: generate the complete Reference Pack from the approved plan, save each single-purpose role locally, compare the first-slot product master with all product evidence, generate any storyboard preview separately, and let the compiler assign tokens in exact payload order.
-8. No-cost preparation: execute `prepare_project.py -> validate_config.py -> validate_platform_plan.py -> preflight_project.py`.
+7. Image preparation: generate the complete Reference Pack from the approved plan, save each full-size image locally, keep the first-slot product master faithful to the evidence, generate any storyboard preview separately, and let the compiler assign tokens in exact payload order.
+8. No-cost preparation: execute `prepare_project.py -> preflight_project.py`. Configuration and platform validators remain internal development diagnostics; they do not create more user-facing gates.
 9. Stage 2: show the actual ordered images, final prompt meaning, speech, subtitle choice, settings, and paid request count.
 10. Final authorization: accept `确认并生成` or an equally clear instruction given while viewing that exact set, then execute `workflow_engine.py confirm/submit/resume`.
 
@@ -122,7 +122,7 @@ Typical generated assets:
 - multiple segment source/first-frame images for single-image models when the ad has scene changes or story beats that should become separate clips.
 - generated first-slot product master plus separate generated model/scene/hand/detail/style/keyframe controls, with prompt tokens assigned by the compiler before confirmation.
 
-After preparing the images, save them locally and show the ordered token map in Stage 2. If image generation fails or any product-fidelity check fails, stop before final authorization.
+After preparing the images, save them locally and show the ordered token map in Stage 2. A missing/unreadable file, raw-image upload, invalid order/count, or unsupported factual claim blocks. Optional AI consistency notes are shown as warnings; the user decides whether the actual image needs regeneration in Stage 2.
 
 ## Stage 2 Decision Card Checklist
 
@@ -162,7 +162,7 @@ Keep the complete advertising strategy in the plan contracts. The exact Provider
 6. `render_guardrails`: clean frame, speech mode and product-motion policy;
 7. `audio`: quoted dialogue/VO, natural-language voice direction, sonic idea, a compact link to the time-aligned sound-on-action cues already written beside each visible beat, the clip's signature SFX, continuous ambience, score/energy relationship, compact mix direction, and optional user-selected voice reference.
 
-`prepare_project.py` records plan schema v3, director compiler `director-commerce-v8` and the `universal-product-director-v4` architecture in each shot's `prompt_contract`. It includes exact/component lengths, creative execution ratio, reference-map ratio, guardrail/audio ratios, action density, recommended prompt range, per-beat camera moves, removed duplicate blocks, `available_visual_chars`, and `sound_cue_coverage`. The last contract proves that all planned cues are rendered beside their actions, the clip's signature SFX remains present, the AUDIO block links the timed cues, and the request contains no dependency on previous clips. Missing coverage blocks preflight before payment. These are rewrite diagnostics, not a new creative-density paid gate. Platform/scenario/compliance/billing details stay in `generation-plan.json`. The compiler owns exactly one of `Cuts` or `Sequence`, one reference map when references exist, and one `AUDIO` section. If required content cannot fit the route's internal workflow budget, stop before confirmation and rewrite the visual direction—never truncate approved dialogue or identity rules. `max_prompt_chars` and `prompt_budget_chars` are adapter/workflow limits with explicit provenance, not an xAI-published universal character limit.
+`prepare_project.py` records plan schema v3, director compiler `director-commerce-v8` and the `universal-product-director-v4` architecture in each shot's `prompt_contract`. It includes exact/component lengths, creative execution ratio, reference-map ratio, guardrail/audio ratios, action density, recommended prompt range, per-beat camera moves, removed duplicate blocks, `available_visual_chars`, and `sound_cue_coverage`. Sound coverage is a rewrite diagnostic and appears as a preflight warning when incomplete; it does not block an otherwise valid image/video request. Platform/scenario/compliance/billing details stay in `generation-plan.json`. The compiler still hard-enforces exactly one of `Cuts` or `Sequence`, one reference map when references exist, and one `AUDIO` section. If essential approved content cannot fit the route's internal workflow budget, rewrite the visual direction—never truncate approved dialogue or identity rules. `max_prompt_chars` and `prompt_budget_chars` are adapter/workflow limits with explicit provenance, not an xAI-published universal character limit.
 
 Before compiling split requests, allocate each semantic storyboard beat whole to one clip and reflow its local time. Because independent requests share no native audio state, restate the full instrument/rhythm/texture, ambience, signature SFX and mix inside every clip; never write “same as previous” or “沿用上一段”. `continuity_plan.edit_boundaries` and `stitching_plan.edit_boundaries` must record the outgoing stable state, incoming state, completed-action cut reason and audio bridge. `stitch_clips.py` preserves PCM intermediates and a single final AAC encode, then records that boundary, sound-continuity and loudness review are still required. Exact identical music across clips requires a separately approved local post mix.
 
@@ -180,47 +180,21 @@ Before compiling split requests, allocate each semantic storyboard beat whole to
    python3 ai-commerce-video/scripts/prepare_project.py --name <name> --product-image <raw-product-evidence.png> --brief <approved-visual-brief.json> --model-key grok_video_15_reference --reference-strategy multi_reference_commercial --generated-reference product=<generated-product-master.png> --generated-reference presenter=<generated-presenter-control.png> --generated-reference scene=<generated-scene-control.png> --storyboard-preview-image <generated-storyboard-review.png> --duration 30 --spoken-script '<two or more complete sentences>'
    ```
 
-2. Validate configuration:
-
-   ```bash
-   python3 ai-commerce-video/scripts/validate_config.py --config ai-commerce-video/assets/templates/model-config.example.json
-   ```
-
-3. Validate platform and plan contracts:
-
-   ```bash
-   python3 ai-commerce-video/scripts/validate_platform_plan.py --plan <project>/generation-plan.json
-   ```
-
-   Inspect the report:
-
-   - `platform_contract` matches aspect ratio, duration, subtitles, safe-zone, CTA, and speaker/audio rules;
-   - `scenario_contract` and `compliance_contract` exist;
-   - `model_capability_contract` supports the requested reference image count, audio/speaker plan, and segment strategy;
-   - `sound_design_contract` explicitly selects `layered_native`, `ambience_led`, or user-approved `voice_only`; every non-voice-only prompt requires non-speech sound and does not accidentally disable a required music layer;
-   - every shot uses the locked confirmed source image or approved segment source image;
-   - every generated R2V reference has concrete evidence IDs, observed mechanisms, and `multimodal_qc_result.status=pass` before Stage 2;
-   - every request duration is a legal selected-model slot;
-   - every spoken segment ends at a stitch-safe sentence boundary;
-   - every Provider prompt uses the prompt compiler, its stored `char_count` matches the exact payload, and it stays within `prompt_budget_chars` and `max_prompt_chars`;
-   - `subtitle_included_in_payload=false` and enabled subtitles are local postproduction only;
-   - approved paid cap equals the base shot count and repair reserve is zero.
-
-4. Freeze the no-cost preflight contract. This command does not require an API key and does not call the Provider:
+2. Run the single no-cost readiness check and freeze the production contract. This command does not require an API key and does not call the Provider:
 
    ```bash
    python3 ai-commerce-video/scripts/preflight_project.py --plan <project>/generation-plan.json --config ai-commerce-video/assets/templates/model-config.example.json
    ```
 
-   Inspect `preflight-report.json`, `production-contract.json`, `model-snapshot.json`, and each dry-run request. Confirm asset hashes, duration digest, exact prompt length, payload fields, clean-frame prompt policy, commercial sound requirement, and `expected_paid_requests`. Missing optional subtitle tools are only `subtitle_postproduction_warnings`; they do not block video generation.
+   Inspect `preflight-report.json`, `production-contract.json`, `model-snapshot.json`, and each dry-run request. Hard errors cover generated-file availability, raw-image isolation, payload/reference order, legal model fields and duration, frozen hashes, exact paid count, and duplicate-submit protection. Per-image evidence/QC detail and sound-cue completeness appear under `warnings` and do not block `paid_generation_allowed`. Missing optional subtitle tools are also warnings.
 
-5. After final user approval, bind that exact frozen contract:
+3. After final user approval, bind that exact frozen contract:
 
    ```bash
    python3 ai-commerce-video/scripts/workflow_engine.py --project-dir <project> confirm --approved-by user
    ```
 
-6. Submit each base shot at most once:
+4. Submit each base shot at most once:
 
    ```bash
    python3 ai-commerce-video/scripts/workflow_engine.py --project-dir <project> submit --config ai-commerce-video/assets/templates/model-config.example.json
@@ -230,7 +204,7 @@ Before compiling split requests, allocate each semantic storyboard beat whole to
 
    The readiness check may use `AI_COMMERCE_VIDEO_PROXY_URL` as a Skill-only proxy. Otherwise it follows the standard environment/system route. It must never bypass the intended route for a misleading direct check, and must never edit Clash, another proxy app, or system network settings. Before the paid HTTP POST, submit also rebuilds the payload and model snapshot and compares them with the frozen preflight contract. Any drift blocks without contacting the Provider. Credentialed polling and Provider-result requests must remain on the frozen submit host; an external `status_url` or `response_url` is rejected before Authorization is sent. The final media URL may use a Provider CDN because that download carries no Provider API key. Once a video POST has been attempted, an unclear response is different: stop and do not rerun `submit`; the persistent ledger already records that paid attempt.
 
-7. Poll or resume existing request IDs:
+5. Poll or resume existing request IDs:
 
    ```bash
    python3 ai-commerce-video/scripts/workflow_engine.py --project-dir <project> resume --config ai-commerce-video/assets/templates/model-config.example.json
@@ -238,28 +212,28 @@ Before compiling split requests, allocate each semantic storyboard beat whole to
 
    Inspect the poll record's `provider_trace`: gateway task ID, gateway database record ID, true nested upstream task ID, channel ID, returned-prompt hash match, result URL hash, downloaded-video hash, and `provider_input_receipt_status`. Old request records are supported by recovering prompt and base64 image hashes from their saved payload. `unverified_provider_input` means the gateway did not echo an image fingerprint; it does not mean Codex sent the wrong file. If the returned prompt hash mismatches, stop before download. If the video is unrelated while prompt and local image evidence match, preserve the records for a provider incident report and do not auto-buy a retry.
 
-8. Stitch if there are multiple clips:
+6. Stitch if there are multiple clips:
 
    ```bash
    python3 ai-commerce-video/scripts/stitch_clips.py --project-dir <project> --target-resolution 720x1280 --target-fps 30 --require-audio
    ```
 
-9. Review the clean output technically, then inspect the generated source-versus-first-frame comparisons and complete multimodal business review using `post-generation-review.md`:
+7. Review the clean output technically. Source-versus-first-frame comparisons and business listening remain available as optional evidence:
 
    ```bash
    python3 ai-commerce-video/scripts/review_render.py --project-dir <project> --video <project>/final.mp4 --clean
    ```
 
-   The resulting `review_scope=technical_media_only`, `technical_status`, and no-cost `sound_signal_screening` describe media evidence only. Even when the legacy top-level `status` is `pass`, formal delivery remains `delivery_status=pending_business_review` and `formal_delivery_approved=false` until human or multimodal listening confirms speech, SFX, ambience, music and mix.
+   New default plans report `delivery_status=technical_ready` after these checks. They do not wait for another mandatory business-review gate. Legacy plans remain `pending_business_review` for compatibility.
 
-10. When the confirmed subtitle plan is enabled, generate and burn subtitles locally after clean review. Never send caption instructions back to the Provider:
+8. When the confirmed subtitle plan is enabled, generate and burn subtitles locally after clean review. Never send caption instructions back to the Provider:
 
    ```bash
    python3 ai-commerce-video/scripts/generate_subtitles.py --plan <project>/generation-plan.json --video <project>/final.mp4 --output <project>/subtitles/final.srt
    python3 ai-commerce-video/scripts/burn_subtitles.py --plan <project>/generation-plan.json --video <project>/final.mp4 --srt <project>/subtitles/final.srt --output <project>/final.captioned.mp4
    ```
 
-11. Finalize only after the required clean and optional caption reviews pass:
+9. Finalize after required technical checks and any selected caption work pass:
 
    ```bash
    python3 ai-commerce-video/scripts/finalize_project.py --project-dir <project>
@@ -278,10 +252,9 @@ For duration above the selected model limit:
 - do not silently add last-frame relay, extra segment sources, or repair requests because each can change cost or approved assets;
 - stitch only after every segment has been downloaded and ffprobe-validated;
 - normalize video consistently and use PCM intermediate speech audio, no fades/crossfades, then one final AAC encode.
-- judge the final speech by clarity and approximate selling meaning, not exact word-for-word script reproduction;
-- listen separately for required SFX, ambience, original music, story support, and mix balance; an AAC stream is not proof;
+- when a detailed business review is requested, judge speech by clarity and approximate selling meaning and listen separately for SFX, ambience, music and mix; an AAC stream is not proof;
 - treat small timing, price, CTA, disclaimer, packaging-text, or visual differences as notes unless they make the video incomplete, incoherent, or unusable;
-- require presenter identity, outfit, scene, and composition to broadly match the approved reference/storyboard.
+- record presenter identity, outfit, scene, and composition differences as optional review findings.
 
 ## Completion Standard
 
@@ -294,7 +267,7 @@ Do not report completion only because a request was submitted. Completion requir
 - MP4 downloaded locally and ffprobe-validated;
 - multi-clip final video normalized, stitched, and ffprobe-validated if needed;
 - stitch report saved when stitching is used;
-- clean multimodal business review passed;
+- required technical review passed; optional business-review findings are recorded when requested;
 - caption review passed when subtitles are enabled;
 - paid submission count did not exceed the confirmed cap;
 - `delivery-manifest.json` exists with `status=pass`;

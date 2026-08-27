@@ -29,6 +29,20 @@ from validate_platform_plan import (
 )
 
 
+ADVISORY_PLAN_ERROR_MARKERS = (
+    "sound_design_contract.mode",
+    "required native commercial sound plan",
+    "non-speech commercial sound plan",
+    "missing an audible synchronized sound cue",
+    "missing the planned ambience bed",
+    "requires music but disables it",
+    "did not preserve the planned clip SFX",
+    "did not preserve every planned sound cue",
+    "did not link the time-coded sound-on-action cues",
+    "sound prompt is not self-contained",
+)
+
+
 def plan_errors(plan: dict, model: dict) -> list[str]:
     errors: list[str] = []
     if plan.get("model_key") != model.get("key"):
@@ -182,12 +196,20 @@ def plan_errors(plan: dict, model: dict) -> list[str]:
 
 
 def platform_errors(plan: dict, config_path: str | None, model_key: str | None) -> list[str]:
+    return [
+        str(item.get("evidence") or item.get("text"))
+        for item in platform_findings(plan, config_path, model_key)
+        if item.get("severity") == "error" and not item.get("passed")
+    ]
+
+
+def platform_findings(plan: dict, config_path: str | None, model_key: str | None) -> list[dict]:
     checks: list[dict] = []
     validate_platform_rules(plan, checks)
     contract = model_contract_from_config(plan, config_path, model_key)
     validate_model_and_assets(plan, checks, contract)
     validate_production_core(plan, checks, contract)
-    return [str(item.get("evidence") or item.get("text")) for item in checks if item.get("severity") == "error" and not item.get("passed")]
+    return [item for item in checks if not item.get("passed")]
 
 
 def build_dry_run_records(plan: dict, model: dict) -> tuple[list[dict], list[str]]:
@@ -244,8 +266,23 @@ def main() -> int:
                 if str(shot.get("spoken_script") or "").strip()
                 else 0,
             })
-        errors = plan_errors(plan, model)
-        errors.extend(platform_errors(plan, args.config, args.model_key))
+        raw_plan_errors = plan_errors(plan, model)
+        warnings = [
+            item for item in raw_plan_errors
+            if any(marker.lower() in item.lower() for marker in ADVISORY_PLAN_ERROR_MARKERS)
+        ]
+        errors = [item for item in raw_plan_errors if item not in warnings]
+        platform_checks = platform_findings(plan, args.config, args.model_key)
+        errors.extend(
+            str(item.get("evidence") or item.get("text"))
+            for item in platform_checks
+            if item.get("severity") == "error"
+        )
+        warnings.extend(
+            str(item.get("evidence") or item.get("text"))
+            for item in platform_checks
+            if item.get("severity") == "warning"
+        )
         records: list[dict] = []
         if not errors:
             records, request_errors = build_dry_run_records(plan, model)
@@ -296,6 +333,8 @@ def main() -> int:
             "project_dir": str(project_dir),
             "model_key": model.get("key"),
             "errors": errors,
+            "warnings": warnings,
+            "warning_count": len(warnings),
             "prompt_summary": prompt_summary,
             "dry_run_request_count": len(records),
             "expected_paid_requests": len(plan.get("shots") or []),

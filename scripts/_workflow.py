@@ -29,6 +29,12 @@ ALLOWED_TRANSITIONS = {
 SECRET_KEY_PARTS = ("api_key", "authorization", "bearer", "secret", "access_token")
 
 
+def delivery_review_policy(plan: dict) -> str:
+    """Return the delivery policy while keeping legacy plans strict."""
+    value = str((plan.get("quality_contract") or {}).get("delivery_review_policy") or "")
+    return value if value in {"technical_ready", "strict_business_review"} else "strict_business_review"
+
+
 def atomic_write_json(path: Path, data: dict) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_name(f".{path.name}.{os.getpid()}.tmp")

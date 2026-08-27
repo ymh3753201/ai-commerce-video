@@ -350,14 +350,14 @@ def copy_or_record_generated_reference(value: str, assets_dir: Path, index: int)
     asset["mechanism_lock"] = "show_only_product_mechanisms_visible_in_or_explicitly_supported_by_input_evidence"
     asset["forbidden_inventions"] = list(FORBIDDEN_UNVERIFIED_MECHANISMS)
     asset["multimodal_qc"] = {
-        "required": True,
+        "required": False,
         "checks": ["same_sku_identity", "packaging_and_logo_consistency", "no_unsupported_mechanism_or_prop"],
-        "status": "required_before_stage_2_confirmation",
+        "status": "advisory_before_stage_2_confirmation",
     }
     asset["multimodal_qc_result"] = {
-        "status": "required_before_stage_2_confirmation",
-        "reviewer": "codex_multimodal",
-        "note": "replace with the actual pass/fail finding before Stage 2 approval",
+        "status": "not_required",
+        "reviewer": "stage_2_user_confirmation",
+        "note": "Optional AI consistency note; the user's Stage 2 review of the actual generated image is the approval gate",
     }
     return asset
 
@@ -1638,18 +1638,18 @@ def build_visual_design_contract(
             },
             "forbidden_inventions": planned.get("forbidden_inventions") or list(FORBIDDEN_UNVERIFIED_MECHANISMS),
             "multimodal_qc": planned.get("multimodal_qc") or {
-                "required": True,
+                "required": False,
                 "checks": ["same_sku_identity", "packaging_and_logo_consistency", "no_unsupported_mechanism_or_prop"],
-                "status": "required_before_stage_2_confirmation",
+                "status": "advisory_before_stage_2_confirmation",
             },
             "multimodal_qc_result": planned.get("multimodal_qc_result") or {
-                "status": "required_before_stage_2_confirmation",
-                "reviewer": "codex_multimodal",
+                "status": "not_required",
+                "reviewer": "stage_2_user_confirmation",
             },
         })
     storyboard_raw = raw.get("storyboard_preview") or {}
     product_master_qc = {
-        "required": require_generated,
+        "required": False,
         "checks": [
             "same_sku_silhouette_and_proportions",
             "same_colors_materials_and_finish",
@@ -1658,7 +1658,7 @@ def build_visual_design_contract(
             "no_invented_removed_or_reworded_product_details",
             "single_clean_product_no_ui_no_watermark_no_added_copy",
         ],
-        "failure_action": "regenerate_product_master_before_stage_2",
+        "failure_action": "regenerate_only_when_stage_2_user_rejects_the_image",
         "raw_fallback_allowed": False,
     }
     return {
@@ -2318,13 +2318,6 @@ def compile_model_prompt(
         "cross_clip_dependency_terms_removed": int(sound_clip.get("cross_clip_dependency_terms_removed") or 0),
         "continuity_strategy": sound_design_contract.get("continuity_strategy") or "",
     }
-    if non_speech_required and not all((
-        sound_cue_coverage["clip_sfx_rendered"],
-        sound_cue_coverage["all_beat_cues_rendered_in_timeline"],
-        sound_cue_coverage["audio_block_links_timecoded_cues"],
-        sound_cue_coverage["self_contained"],
-    )):
-        raise ScriptError(f"Provider sound prompt coverage is incomplete: {sound_cue_coverage}")
     commercial_strategy = commercial_strategy or {}
     strategy_line = creative_intent_contract(creative_variant)
     if commercial_strategy.get("provider_prompt_summary"):
@@ -3046,6 +3039,11 @@ def main() -> int:
             "tail_trim_policy": "verified_idle_tail_only",
         }
         quality_contract = {
+            "delivery_review_policy": "technical_ready",
+            "stage_2_actual_images_are_primary_visual_approval": True,
+            "post_generation_business_review_required": False,
+            "post_generation_business_review_available": True,
+            "sound_review_blocking": False,
             "speech_verification_required": bool(spoken_script.strip()),
             "audio_track_is_not_speech_proof": True,
             "audio_track_is_not_sound_design_proof": True,

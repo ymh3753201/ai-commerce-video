@@ -10,6 +10,7 @@ import subprocess
 from pathlib import Path
 
 from _common import ScriptError, asset_value, is_url, load_json, require_ffmpeg, sha256_file, verify_media_file, write_json
+from _workflow import delivery_review_policy
 
 
 QC_FAILURE_CODES = {
@@ -301,13 +302,23 @@ def main() -> int:
         if not stitch_pass:
             issues.append("Multi-clip stitch report does not prove PCM intermediates, no fades/crossfades, and one final AAC encode")
         technical_status = "pass" if not issues else "blocked"
+        review_policy = delivery_review_policy(plan)
+        strict_business_review = review_policy == "strict_business_review"
         signal_screening = sound_signal_screening(plan, silences)
         report = {
             "status": technical_status,
             "review_scope": "technical_media_only",
             "technical_status": technical_status,
-            "delivery_status": "pending_business_review" if technical_status == "pass" else "blocked_technical",
+            "delivery_status": (
+                "pending_business_review"
+                if technical_status == "pass" and strict_business_review
+                else "technical_ready"
+                if technical_status == "pass"
+                else "blocked_technical"
+            ),
             "formal_delivery_approved": False,
+            "ready_to_finalize": technical_status == "pass" and not strict_business_review,
+            "delivery_review_policy": review_policy,
             "video": str(video),
             "video_sha256": sha256_file(video),
             "media": media,
@@ -327,16 +338,17 @@ def main() -> int:
             "stitch_audio_policy_pass": stitch_pass,
             "source_frame_comparisons": comparisons,
             "issues": issues,
-            "multimodal_visual_review_required": True,
+            "multimodal_visual_review_required": strict_business_review,
+            "multimodal_visual_review_available": True,
             "visual_review_fields": planned_visual_review_fields(plan),
             "qc_failure_code_catalog": QC_FAILURE_CODES,
             "selected_qc_failure_codes": [],
             "paid_repair_authorized": False,
             "acceptance_note": (
-                "Judge speech by intelligibility and approximate selling meaning, not word-for-word script identity. "
-                "Separately listen for every required SFX, ambience, and music layer; an AAC stream does not prove them. "
-                "Record packaging text, generated text, price, CTA, disclaimer, silence, and freeze observations as notes "
-                "unless they make the video incomplete, incoherent, or unusable."
+                "Technical media checks are complete. Optional visual and listening review can record creative differences "
+                "without creating another mandatory user gate for the default workflow."
+                if not strict_business_review else
+                "Judge speech by intelligibility and approximate selling meaning, then record the required visual and listening fields."
             ),
             "paid_api_call": False,
         }

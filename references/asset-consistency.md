@@ -26,7 +26,7 @@ On the default route, every user upload remains evidence. The generated professi
 - For the default multi-reference route, generate the complete Reference Pack, keep the professional product master first, and add only the single-purpose controls the approved clip genuinely needs.
 - If an image is generated only to help the user review the storyboard and will not be uploaded, label it `preview_only` and say so in the proposal.
 - Do not generate Provider references before Stage 1 creative approval. Do not proceed to paid video generation until the exact ordered upload set is visible in Stage 2 and covered by `确认并生成`.
-- Before Stage 2, each generated Provider reference must name concrete `fact_source_asset_ids`, list only evidence-observed mechanisms, and carry an actual passing `multimodal_qc_result`. A planned or pending review is not approval.
+- Before Stage 2, save every generated Provider reference locally and show the full-size actual file. Concrete evidence IDs, observed-mechanism notes and AI consistency findings are useful trace data, but missing or pending advisory fields do not replace or delay the user's Stage 2 approval.
 
 The proposal and the dry-run must agree. Any generated approval image that is meant to influence the video must appear in `asset_contract.video_source_asset` or `asset_contract.video_reference_assets`, and then in the dry-run payload.
 
@@ -49,7 +49,7 @@ Treat all trustworthy views of one SKU as one ordered `product_identity_evidence
 
 For every Codex `imagegen` call whose result contains or depends on the product—`product`, `product_detail`, product-wearing/holding `presenter`, `wardrobe`, `hand_action`, and clean `beat_keyframe_*` controls—pass the complete ordered set as `referenced_image_paths`. Add a person, scene, or style path only when that specific control needs it. Refer to each input by order and purpose in the image prompt, such as front identity, worn fit, or back/port detail. A pure empty-scene or style plate does not need product evidence.
 
-The prepared plan records `generation_input_asset_ids`, `generation_input_paths`, `generation_input_sha256`, and `generation_input_policy` for each generated control. These fields are the local execution record; they are not a Provider receipt. Before Stage 2, preflight resolves the IDs back to saved evidence and rejects a product-dependent control when any required same-SKU view, ordered path/hash record, or matching QC comparison is missing. This adds no user approval step.
+The prepared plan can record `generation_input_asset_ids`, `generation_input_paths`, `generation_input_sha256`, and `generation_input_policy` for each generated control. These fields are useful local trace data; they are not a Provider receipt. Preflight reports incomplete evidence/QC records as warnings. It blocks only when the actual Provider set violates the hard asset contract, such as a raw user image, unreadable generated file, missing first-slot product master, illegal count/order, or preview-grid upload.
 
 ## Model Input Modes
 

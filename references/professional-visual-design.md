@@ -69,7 +69,7 @@ Every generated reference image needs a separate prompt containing:
 
 Do not put every control requirement into every image. The generated first-slot professional product master owns SKU identity after it passes evidence comparison. A presenter plate prioritizes a clear face and body, a scene plate the empty environment, and a detail/action plate one truthful proof.
 
-Every generated reference records concrete `fact_source_asset_ids`, its actual ordered `generation_input_asset_ids`/paths/hashes, `mechanism_contract.observed`, `forbidden_inventions`, and an actual `multimodal_qc_result`. Product-dependent controls must use and be checked against the complete `product_identity_evidence` set before Stage 2. If the evidence does not show or state a mechanism, image prompts must forbid droppers, pumps, sprayers, buttons, ports, hinges, closures, opening methods, detachable parts, and mechanism-specific props. An attractive but unsupported applicator is a factual failure, not harmless styling.
+Every generated reference must be saved with its role and image prompt; evidence IDs, input paths/hashes, mechanism notes and AI consistency results are recommended trace data. Stage 2 review of the actual full-size images is the primary visual approval, so incomplete advisory metadata does not block video generation. If the evidence does not show or state a mechanism, image prompts must still forbid droppers, pumps, sprayers, buttons, ports, hinges, closures, opening methods, detachable parts, and mechanism-specific props. An attractive but unsupported applicator remains a factual failure, not harmless styling.
 
 ## Video Prompt Contract
 

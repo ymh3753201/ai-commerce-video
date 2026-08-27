@@ -1217,11 +1217,13 @@ class SkillValidationTests(unittest.TestCase):
                 ["<IMAGE_0>", "<IMAGE_1>", "<IMAGE_2>"],
             )
             self.assertEqual(plan["visual_design_contract"]["schema_version"], "professional-director-visual-v6")
-            self.assertTrue(plan["visual_design_contract"]["product_master_qc"]["required"])
+            self.assertEqual(plan["quality_contract"]["delivery_review_policy"], "technical_ready")
+            self.assertTrue(plan["quality_contract"]["stage_2_actual_images_are_primary_visual_approval"])
+            self.assertFalse(plan["visual_design_contract"]["product_master_qc"]["required"])
             self.assertFalse(plan["visual_design_contract"]["product_master_qc"]["raw_fallback_allowed"])
             self.assertEqual(
                 plan["visual_design_contract"]["product_master_qc"]["failure_action"],
-                "regenerate_product_master_before_stage_2",
+                "regenerate_only_when_stage_2_user_rejects_the_image",
             )
             self.assertFalse(plan["asset_contract"]["raw_inputs_provider_upload_allowed"])
             self.assertFalse(plan["asset_contract"]["raw_product_inputs_provider_upload_allowed"])
@@ -1333,7 +1335,7 @@ class SkillValidationTests(unittest.TestCase):
                 for check in checks
             ))
 
-    def test_single_product_evidence_is_not_falsely_recorded_as_actual_imagegen_input(self):
+    def test_missing_imagegen_input_record_is_advisory_not_a_paid_gate(self):
         with tempfile.TemporaryDirectory() as tmp:
             tmp_path = Path(tmp)
             product = tmp_path / "product.png"
@@ -1366,11 +1368,13 @@ class SkillValidationTests(unittest.TestCase):
             self.assertEqual(reference["generation_input_asset_ids"], [])
             self.assertEqual(reference["generation_input_record_status"], "no_reference_input_recorded")
             self.assertNotIn("checked_against_asset_ids", reference["multimodal_qc_result"])
-            preflight = run_cmd_fail([
+            preflight = run_cmd([
                 "python3", str(SCRIPTS / "preflight_project.py"),
                 "--plan", str(plan_path),
             ])
-            self.assertIn("complete product identity evidence set", preflight.stdout)
+            report = json.loads(preflight.stdout)
+            self.assertTrue(report["paid_generation_allowed"])
+            self.assertTrue(any("complete product identity evidence set" in item for item in report["warnings"]))
 
     def test_dual_role_worn_product_evidence_is_included_but_scene_evidence_is_not(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -1431,7 +1435,7 @@ class SkillValidationTests(unittest.TestCase):
             for reference in plan["generated_reference_assets"]:
                 self.assertEqual(reference["generation_input_asset_ids"], identity_ids)
 
-    def test_preflight_blocks_product_reference_that_omits_one_product_view(self):
+    def test_preflight_warns_when_product_reference_omits_one_product_view(self):
         with tempfile.TemporaryDirectory() as tmp:
             tmp_path = Path(tmp)
             product_front = tmp_path / "front.png"
@@ -1468,11 +1472,13 @@ class SkillValidationTests(unittest.TestCase):
                 "--model-key", "grok_video_15_reference",
             ])
             plan_path = Path(json.loads(prepared.stdout)["plan"])
-            blocked = run_cmd_fail([
+            preflight = run_cmd([
                 "python3", str(SCRIPTS / "preflight_project.py"),
                 "--plan", str(plan_path),
             ])
-            self.assertIn("complete product identity evidence set", blocked.stdout)
+            report = json.loads(preflight.stdout)
+            self.assertTrue(report["paid_generation_allowed"])
+            self.assertTrue(any("complete product identity evidence set" in item for item in report["warnings"]))
 
     def test_default_xai_reference_route_rejects_raw_evidence_as_provider_references(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -2678,7 +2684,8 @@ class SkillValidationTests(unittest.TestCase):
                 "--brief", str(brief),
                 "--model-key", "grok_video_15_reference",
             ])
-            plan = json.loads(Path(json.loads(prepared.stdout)["plan"]).read_text(encoding="utf-8"))
+            plan_path = Path(json.loads(prepared.stdout)["plan"])
+            plan = json.loads(plan_path.read_text(encoding="utf-8"))
             self.assertEqual(plan["duration_plan"]["request_durations_seconds"], [10, 5])
             self.assertEqual(plan["production_contract"]["approved_paid_cap"], 2)
             self.assertEqual(plan["model_capability_contract"]["planning_max_duration_seconds"], 10)
@@ -3157,7 +3164,7 @@ class SkillValidationTests(unittest.TestCase):
             plan = json.loads(Path(json.loads(result.stdout)["plan"]).read_text(encoding="utf-8"))
             self.assertEqual(plan["creative_contract"]["talent_effects_contract"]["decision"], "director_judgment")
 
-    def test_preflight_blocks_pending_reference_qc_and_accepts_recorded_pass(self):
+    def test_preflight_treats_reference_qc_as_advisory_and_accepts_recorded_pass(self):
         with tempfile.TemporaryDirectory() as tmp:
             tmp_path = Path(tmp)
             product = tmp_path / "product.png"
@@ -3194,11 +3201,13 @@ class SkillValidationTests(unittest.TestCase):
                 return Path(json.loads(prepared.stdout)["plan"])
 
             pending_plan = prepare("required_before_stage_2_confirmation")
-            blocked = run_cmd_fail([
+            pending = run_cmd([
                 "python3", str(SCRIPTS / "preflight_project.py"),
                 "--plan", str(pending_plan),
             ])
-            self.assertIn("multimodal QC must pass before Stage 2", blocked.stdout)
+            pending_report = json.loads(pending.stdout)
+            self.assertTrue(pending_report["paid_generation_allowed"])
+            self.assertTrue(any("Stage 2 user review remains the approval gate" in item for item in pending_report["warnings"]))
 
             passed_plan = prepare("pass")
             passed = run_cmd([
@@ -3363,7 +3372,8 @@ class SkillValidationTests(unittest.TestCase):
                 "--brief", str(brief),
                 "--model-key", "grok_video_15_reference",
             ])
-            plan = json.loads(Path(json.loads(prepared.stdout)["plan"]).read_text(encoding="utf-8"))
+            plan_path = Path(json.loads(prepared.stdout)["plan"])
+            plan = json.loads(plan_path.read_text(encoding="utf-8"))
             second = plan["shots"][1]
             audio_block = second["prompt"].split("AUDIO:", 1)[1]
             coverage = second["prompt_contract"]["sound_cue_coverage"]
@@ -3402,6 +3412,14 @@ class SkillValidationTests(unittest.TestCase):
             broken["shots"][1]["prompt_contract"]["sound_cue_coverage"]["self_contained"] = False
             errors = plan_errors(broken, model)
             self.assertTrue(any("self-contained" in error for error in errors))
+            plan_path.write_text(json.dumps(broken), encoding="utf-8")
+            preflight = run_cmd([
+                "python3", str(SCRIPTS / "preflight_project.py"),
+                "--plan", str(plan_path),
+            ])
+            preflight_report = json.loads(preflight.stdout)
+            self.assertTrue(preflight_report["paid_generation_allowed"])
+            self.assertTrue(any("self-contained" in item for item in preflight_report["warnings"]))
 
     def test_explicit_no_music_uses_ambience_led_sound_instead_of_voice_only(self):
         with tempfile.TemporaryDirectory() as tmp:

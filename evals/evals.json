@@ -40,7 +40,7 @@
     {
       "id": 7,
       "prompt": "两段 Grok 视频已经生成，帮我拼成完整带货视频，口播中间不能有爆音或断字，完成后直接说交付成功。",
-      "expected_output": "Should verify both clips, complete visible-action exits/entries and complete-sentence boundaries, stitch with PCM intermediates, no fades/crossfades and one final AAC encode, review the planned ambience/score bridge and loudness consistency, run clean technical and multimodal business review, and only claim delivery after finalization writes a passing delivery manifest.",
+      "expected_output": "Should verify both clips, complete visible-action exits/entries and complete-sentence boundaries, stitch with PCM intermediates, no fades/crossfades and one final AAC encode, run the required technical review, and only claim delivery after finalization writes a passing delivery manifest. Detailed visual/listening review may be added without becoming a mandatory third gate.",
       "files": []
     },
     {
@@ -82,7 +82,7 @@
     {
       "id": 14,
       "prompt": "我提供了一张白底商品主图和一张真实手提图。请做 15 秒多参考图带货广告：商品主图必须锁定商品身份，真实手提图只供你分析；先根据商品分析、视觉方案和分镜生成后续专业参考图，分镜图如何使用也要按 grok-imagine-video-1.5 的能力决定。",
-      "expected_output": "Should keep every uploaded product and real-use image in input_evidence_assets only, classify both trustworthy same-SKU views into one ordered product_identity_evidence set even when the real-use photo also has a model/context role, and pass that complete set together to every product-dependent imagegen call. It should design and obtain Stage 1 approval before reference generation, regenerate IMAGE_0 as a faithful professional product master plus only necessary presenter/scene/hand/detail/style controls or clean full-frame beat keyframes, record the actual ordered imagegen input IDs/paths/hashes, concrete fact IDs, observed mechanisms and passing multimodal QC, map flexible time-coded beats into the current MikuAPI 10+5 request plan with one camera move per beat, keep storyboard/contact-sheet grids in approval_preview_assets, and use compiler-owned canonical IMAGE token mapping.",
+      "expected_output": "Should keep every uploaded product and real-use image in input_evidence_assets only, use both trustworthy same-SKU views as image-generation references, obtain Stage 1 approval, then regenerate IMAGE_0 as a faithful professional product master plus clean full-frame storyboard keyframes or only necessary controls. It should save and show the actual generated images in Stage 2, treat detailed input IDs/paths/hashes and AI QC as advisory trace data, map flexible beats into the MikuAPI 10+5 plan, keep storyboard grids review-only, and use compiler-owned IMAGE token mapping.",
       "files": []
     },
     {
@@ -94,19 +94,19 @@
     {
       "id": 16,
       "prompt": "这条 LA MER 高端护肤广告计划有中文旁白，但成片只有音乐和听不懂的人声；Provider 实际只返回约 10 秒，却补静帧做成 15 秒。不要自动重新花钱，请审查是否可以交付。",
-      "expected_output": "Should distinguish AAC audio-track presence from intelligible speech, require local transcription or human listening for planned speech, mark speech_intelligible=false or speech_meaning_preserved=false as blocked, reject a duration shortfall over one second and long static padding, preserve the one-submit ledger, create no delivery manifest, and make no paid retry without new authorization.",
+      "expected_output": "Should distinguish AAC presence from intelligible speech, record the speech problem in the requested business review, reject the technical duration shortfall over one second and long static padding, preserve the one-submit ledger, create no delivery manifest because the technical duration gate fails, and make no paid retry without new authorization.",
       "files": []
     },
     {
       "id": 17,
       "prompt": "方案写的是不出镜、女性普通话高级旁白，但生成结果听起来像男声；同时我要求 15 秒，MikuAPI 实际只返回约 10 秒。请判断是提示词问题还是模型问题，并优化 Skill，不要重新付费。",
-      "expected_output": "Should inspect the frozen strategy, exact outbound prompt, request payload and returned media before assigning blame. It should distinguish visible talent from voice gender, confirm whether any person actually appears, identify any lost female voice direction or contradictory generic talent sentence as a local compiler defect, preserve an explicit no-human directive and female voice description, block voice-gender drift at delivery, recognize that the payload requested 15 seconds while the relay returned about 10 seconds, plan future MikuAPI 15-second deliveries as 10+5 with two approved requests, preserve the old paid ledger, and make no paid retry.",
+      "expected_output": "Should inspect the frozen strategy, exact outbound prompt, payload and returned media before assigning blame; distinguish visible talent from voice gender; record lost female voice direction as a business-review finding; recognize the technical duration shortfall; plan future MikuAPI 15-second deliveries as 10+5; preserve the old paid ledger; and make no paid retry.",
       "files": []
     },
     {
       "id": 18,
       "prompt": "这条法拉利夜间出发广告的视频有清楚旁白，但没有方案里写的引擎声、脚步、城市环境声或背景配乐。请审查 Skill 并优化，不要重新付费生成。",
-      "expected_output": "Should inspect the saved sound intent, per-clip AUDIO blocks and final media before assigning blame; distinguish an AAC stream and intelligible voice from audible non-speech sound design; identify any default Music=no music, vague untimed SFX/ambience labels, or missing sound-layer acceptance as local architecture defects; create an explicit layered_native or intentional ambience_led contract with action-synced SFX, continuous ambience, original no-vocal music policy and clear mix direction; require human or multimodal listening for planned layers; block formal delivery when required sound is absent; preserve the paid ledger and make no paid retry.",
+      "expected_output": "Should inspect the saved sound intent, per-clip AUDIO blocks and final media before assigning blame; distinguish AAC and voice from audible non-speech sound; improve layered_native or ambience_led prompting with action-synced SFX, ambience, music and mix; record missing layers as an optional business-review finding rather than a default paid gate; preserve the ledger; and make no paid retry.",
       "files": []
     },
     {
@@ -124,13 +124,13 @@
     {
       "id": 21,
       "prompt": "这条黑白运动鞋 15 秒广告计划里有人声、脚步音、空间环境声和背景音乐，但成片听起来只有人声。请判断是模型还是 Skill 的问题，优化后不要自动重新付费。",
-      "expected_output": "Should inspect the frozen plan, exact per-clip prompts, outbound payloads, Provider prompt receipt evidence, source clips and stitched master before assigning sole blame. It should identify any lost clip SFX, end-loaded AUDIO direction or cross-request wording such as same as previous as local architecture defects, while disclosing that native sound generation is Provider best-effort and an unverified returned prompt prevents proving relay versus upstream non-adherence. director-commerce-v8 should place complete sound-on-action cues beside every visible beat, preserve the clip signature SFX, restate ambience/music/mix independently in every paid request, reject cross-clip shorthand during preflight, distinguish technical media pass from formal delivery, require listening for SFX/ambience/music/mix, preserve the paid ledger, and make no paid retry.",
+      "expected_output": "Should inspect the frozen plan, exact per-clip prompts, payload evidence, source clips and stitched master before assigning blame; identify lost SFX or cross-request shorthand as prompt-quality issues; disclose that native sound is Provider best-effort; keep director-commerce-v8 sound-on-action guidance; report incomplete coverage/listening results as advisory findings; preserve the paid ledger; and make no paid retry.",
       "files": []
     },
     {
       "id": 22,
       "prompt": "我上传了同一件商品的正面、背面和模特实穿图，还上传了一张纯场景灵感图。生成商品主控图、模特图和广告关键帧时请保持商品完全一致，但不要把无关图片全塞给图片模型。先生成参考图，不要调用付费视频。",
-      "expected_output": "Should classify the three trustworthy same-SKU views into one ordered product_identity_evidence set, keep the scene image outside that set, and use the complete product set together for every imagegen output that contains or depends on the product. It should append the scene only to a control that actually needs that setting, preserve dual-role worn-product evidence, record ordered generation input asset IDs/paths/hashes and QC against the same set, block Stage 2 if any product view is omitted, add no new approval step, and make no paid video request.",
+      "expected_output": "Should classify the three trustworthy same-SKU views as product evidence, keep the pure scene image role-specific, use sufficient product references for product-dependent imagegen outputs, and save the actual generated images. Missing detailed input IDs/paths/hashes or AI QC should be an advisory warning rather than a Stage 2 blocker; the user confirms the actual full-size images; no extra approval or paid video request is added.",
       "files": []
     }
   ]

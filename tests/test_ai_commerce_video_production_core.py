@@ -1035,6 +1035,7 @@ class ProductionCoreTests(unittest.TestCase):
                 ],
                 "stitching_plan": {"required": True},
                 "subtitle_plan": {"enabled": False},
+                "quality_contract": {"delivery_review_policy": "technical_ready"},
             }
             (project / "generation-plan.json").write_text(json.dumps(plan), encoding="utf-8")
             stitched = run_cmd([
@@ -1050,8 +1051,10 @@ class ProductionCoreTests(unittest.TestCase):
             self.assertEqual(report["status"], "pass")
             self.assertEqual(report["review_scope"], "technical_media_only")
             self.assertEqual(report["technical_status"], "pass")
-            self.assertEqual(report["delivery_status"], "pending_business_review")
+            self.assertEqual(report["delivery_status"], "technical_ready")
             self.assertFalse(report["formal_delivery_approved"])
+            self.assertTrue(report["ready_to_finalize"])
+            self.assertFalse(report["multimodal_visual_review_required"])
             self.assertIn("sound_signal_screening", report)
             self.assertFalse(report["sound_signal_screening"]["listening_verdict"])
             self.assertTrue(report["delivery_duration_hard_limit_pass"])
@@ -1088,6 +1091,22 @@ class ProductionCoreTests(unittest.TestCase):
             }
             (project / "final-review.json").write_text(json.dumps(technical), encoding="utf-8")
             (project / "visual-review.json").write_text(json.dumps(visual), encoding="utf-8")
+            self.assertEqual(workflow_engine.project_stage(project)["stage"], "ready_to_finalize")
+
+    def test_new_default_policy_needs_technical_review_but_not_business_review(self):
+        workflow_engine = importlib.import_module("workflow_engine")
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp)
+            plan = {
+                "quality_contract": {"delivery_review_policy": "technical_ready"},
+                "subtitle_plan": {"enabled": False},
+            }
+            jobs = {"jobs": {"shot_01": {"state": "verified", "verification_scope": "technical_media_only"}}}
+            (project / "generation-plan.json").write_text(json.dumps(plan), encoding="utf-8")
+            (project / "jobs.json").write_text(json.dumps(jobs), encoding="utf-8")
+            self.assertEqual(workflow_engine.project_stage(project)["stage"], "awaiting_technical_review")
+            technical = {"status": "pass", "delivery_duration_hard_limit_pass": True, "video_sha256": "hash"}
+            (project / "final-review.json").write_text(json.dumps(technical), encoding="utf-8")
             self.assertEqual(workflow_engine.project_stage(project)["stage"], "ready_to_finalize")
 
     def test_provider_trace_prefers_nested_upstream_task_and_supports_legacy_requests(self):
@@ -1305,6 +1324,63 @@ class ProductionCoreTests(unittest.TestCase):
             delivery = json.loads((project / "delivery-manifest.json").read_text(encoding="utf-8"))
             self.assertEqual(delivery["status"], "pass")
             self.assertTrue(delivery["final_artifact"]["sha256"])
+
+    def test_finalize_new_default_policy_without_optional_visual_review(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp)
+            final_video = project / "final.mp4"
+            make_test_video(final_video, duration=1.0, audio=True)
+            plan = {
+                "shots": [{"id": "shot_01"}],
+                "production_contract": {
+                    "base_request_count": 1,
+                    "approved_paid_cap": 1,
+                    "repair_reserve": 0,
+                    "per_shot_repair_limit": 0,
+                },
+                "quality_contract": {"delivery_review_policy": "technical_ready"},
+                "subtitle_plan": {"enabled": False},
+            }
+            common = importlib.import_module("_common")
+            contract = {
+                "contract_digest": "contract-1",
+                "plan_digest": common.canonical_digest(plan),
+                "duration_plan_digest": "",
+                "approved_paid_cap": 1,
+            }
+            confirmation = {
+                "contract_digest": "contract-1",
+                "plan_digest": contract["plan_digest"],
+                "duration_plan_digest": "",
+                "approved_paid_cap": 1,
+            }
+            video_hash = common.sha256_file(final_video)
+            files = {
+                "generation-plan.json": plan,
+                "jobs.json": {
+                    "contract_digest": "contract-1",
+                    "approved_paid_cap": 1,
+                    "jobs": [{"shot_id": "shot_01", "state": "verified", "submission_attempts": 1}],
+                },
+                "production-contract.json": contract,
+                "video-confirmation.json": confirmation,
+                "final-review.json": {
+                    "status": "pass",
+                    "delivery_duration_hard_limit_pass": True,
+                    "video_sha256": video_hash,
+                },
+            }
+            for name, value in files.items():
+                (project / name).write_text(json.dumps(value), encoding="utf-8")
+            result = run_cmd([
+                "python3", str(SCRIPTS / "finalize_project.py"),
+                "--project-dir", str(project), "--video", str(final_video),
+            ])
+            report = json.loads(result.stdout)
+            self.assertEqual(report["status"], "pass")
+            self.assertEqual(report["delivery_review_policy"], "technical_ready")
+            self.assertTrue(any("Optional post-generation" in item for item in report["warnings"]))
+            self.assertFalse((project / "visual-review.json").exists())
 
 
 if __name__ == "__main__":

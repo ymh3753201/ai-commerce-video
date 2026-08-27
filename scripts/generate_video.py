@@ -650,6 +650,7 @@ def main() -> int:
         project_dir = plan_path.parent
         ledger = None
         paid_lock = None
+        approved_request_records: dict[str, dict] = {}
         if not args.dry_run:
             confirmation = load_json(Path(args.confirmation_file).expanduser().resolve())
             contract = load_json(project_dir / "production-contract.json")
@@ -664,18 +665,17 @@ def main() -> int:
                 raise ScriptError("Confirmation plan digest does not match generation-plan.json")
             if confirmation.get("duration_plan_digest") != plan.get("duration_plan_digest"):
                 raise ScriptError("Confirmation duration-plan digest does not match generation-plan.json")
-            contract_errors = verify_contract(
-                contract,
-                plan,
-                model,
-                current_contract_request_records(plan, model),
-            )
+            rebuilt_records = current_contract_request_records(plan, model)
+            contract_errors = verify_contract(contract, plan, model, rebuilt_records)
             if contract_errors:
                 raise ScriptError(
                     "Refusing paid submission because the current model or request payload has drifted from preflight: "
                     + "; ".join(contract_errors)
                     + ". Run preflight again and obtain a new confirmation before any paid request."
                 )
+            approved_request_records = {
+                str(item.get("shot_id") or ""): item for item in rebuilt_records
+            }
             ledger = load_or_create_jobs(
                 project_dir,
                 plan,
@@ -686,9 +686,20 @@ def main() -> int:
 
         try:
             for shot in selected_shots(plan, args.shot_id):
-                payload = build_payload(plan, shot, model)
-                reference_assets = configured_video_references(plan, shot)
-                references_included = bool(reference_assets and model_supports_reference_images(model))
+                approved_record = approved_request_records.get(str(shot.get("id") or ""))
+                if approved_record:
+                    payload = approved_record["payload"]
+                    approved_asset_trace = approved_record["asset_trace"]
+                else:
+                    payload = build_payload(plan, shot, model)
+                    reference_assets = configured_video_references(plan, shot)
+                    approved_asset_trace = asset_trace(
+                        plan,
+                        shot,
+                        model,
+                        bool(reference_assets and model_supports_reference_images(model)),
+                        reference_assets,
+                    )
                 request_file = Path(shot["request_file"]).expanduser().resolve()
                 record = {
                     "shot_id": shot["id"],
@@ -698,7 +709,7 @@ def main() -> int:
                     "payload": payload,
                     "request_evidence": request_evidence(payload, model),
                     "quality_contract": plan.get("quality_contract") or {},
-                    "asset_trace": asset_trace(plan, shot, model, references_included, reference_assets),
+                    "asset_trace": approved_asset_trace,
                     "confirmation": confirmation_record,
                     "provider_readiness": readiness_record,
                     "dry_run": args.dry_run,

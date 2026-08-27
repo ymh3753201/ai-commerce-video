@@ -227,6 +227,7 @@ def validate_model_and_assets(plan: dict, checks: list[dict], model_contract: di
                 "Visual plan defines a generation prompt for every uploaded reference",
                 not incomplete_visual_roles,
                 f"incomplete_roles={incomplete_visual_roles}",
+                severity="warning",
             )
             qc_failures = []
             missing_fact_sources = []
@@ -244,15 +245,17 @@ def validate_model_and_assets(plan: dict, checks: list[dict], model_contract: di
                     missing_fact_sources.append(role)
             add_check(
                 checks,
-                "Every generated Provider reference passes multimodal QC before Stage 2",
+                "Optional AI consistency review is recorded before Stage 2",
                 not qc_failures,
-                f"multimodal QC must pass before Stage 2; failing_roles={qc_failures}",
+                f"Stage 2 user review remains the approval gate; advisory_findings={qc_failures}",
+                severity="warning",
             )
             add_check(
                 checks,
-                "Every generated Provider reference cites concrete input evidence assets",
+                "Generated Provider references cite concrete input evidence assets",
                 not missing_fact_sources,
                 f"missing_fact_source_asset_ids={missing_fact_sources}",
+                severity="warning",
             )
             product_identity_evidence = asset_contract.get("product_identity_evidence") or []
             if product_identity_evidence:
@@ -284,6 +287,7 @@ def validate_model_and_assets(plan: dict, checks: list[dict], model_contract: di
                     "Product identity evidence is an ordered subset of saved input evidence",
                     bool(product_identity_ids) and not identity_collection_failures,
                     f"product_identity_evidence_asset_ids={product_identity_ids}; failures={identity_collection_failures}",
+                    severity="warning",
                 )
 
                 imagegen_record_failures = []
@@ -331,6 +335,7 @@ def validate_model_and_assets(plan: dict, checks: list[dict], model_contract: di
                     product_dependent_count > 0 and not imagegen_record_failures,
                     "complete product identity evidence set; "
                     f"product_dependent_count={product_dependent_count}; failures={imagegen_record_failures}",
+                    severity="warning",
                 )
             for shot in shots:
                 prompt = str(shot.get("prompt") or "")
@@ -599,18 +604,21 @@ def validate_production_core(plan: dict, checks: list[dict], model_contract: dic
             "Commercial sound mode is explicit",
             mode in {"layered_native", "ambience_led", "voice_only"},
             f"sound_mode={mode}",
+            severity="warning",
         )
         add_check(
             checks,
             "Required non-speech sound has at least one sonic bed",
             not non_speech_required or bool(required_layers.get("sfx") or required_layers.get("ambience")),
             f"non_speech_required={non_speech_required}; required_layers={required_layers}",
+            severity="warning",
         )
         add_check(
             checks,
             "Required commercial sound uses an audio-capable Provider route",
             not non_speech_required or sound.get("native_provider_sound") is True,
             f"native_provider_sound={sound.get('native_provider_sound')}",
+            severity="warning",
         )
         if non_speech_required:
             add_check(
@@ -623,6 +631,7 @@ def validate_production_core(plan: dict, checks: list[dict], model_contract: dic
                     for shot in shots
                 ),
                 "required semantic fields: Cues, Ambience and Mix",
+                severity="warning",
             )
             sound_coverage = [
                 (shot.get("prompt_contract") or {}).get("sound_cue_coverage") or {}
@@ -640,6 +649,7 @@ def validate_production_core(plan: dict, checks: list[dict], model_contract: dic
                     for item in sound_coverage
                 ) if sound_coverage else True,
                 f"sound_cue_coverage={sound_coverage}",
+                severity="warning",
             )
         if required_layers.get("music"):
             add_check(
@@ -647,6 +657,7 @@ def validate_production_core(plan: dict, checks: list[dict], model_contract: dic
                 "Music-required prompts do not disable music",
                 all("Music=no music" not in str(shot.get("prompt") or "") for shot in shots),
                 "Music=no music is incompatible with original_instrumental policy",
+                severity="warning",
             )
 
     expected_count = len(shots)

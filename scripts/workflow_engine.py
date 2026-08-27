@@ -11,7 +11,7 @@ import time
 from pathlib import Path
 
 from _common import ScriptError, canonical_digest, load_json
-from _workflow import atomic_write_json, load_or_create_jobs, pollable_request_id, transition_job
+from _workflow import atomic_write_json, delivery_review_policy, load_or_create_jobs, pollable_request_id, transition_job
 from finalize_project import CAPTION_VISUAL_FIELDS
 from review_render import planned_visual_review_fields
 
@@ -46,22 +46,27 @@ def project_stage(project_dir: Path) -> dict:
     def reviews_ready() -> bool:
         plan_data = load_json(plan) if plan.exists() else {}
         subtitles_enabled = bool((plan_data.get("subtitle_plan") or {}).get("enabled"))
+        strict_business_review = delivery_review_policy(plan_data) == "strict_business_review"
         technical_path = project_dir / ("final-review.clean.json" if subtitles_enabled else "final-review.json")
         clean_visual_path = project_dir / ("visual-review.clean.json" if subtitles_enabled else "visual-review.json")
-        if not technical_path.exists() or not clean_visual_path.exists():
+        if not technical_path.exists() or (strict_business_review and not clean_visual_path.exists()):
             return False
         technical = load_json(technical_path)
-        visual = load_json(clean_visual_path)
         clean_hash = str(technical.get("video_sha256") or "")
         if (
             technical.get("status") != "pass"
             or technical.get("delivery_duration_hard_limit_pass") is not True
             or not clean_hash
-            or visual.get("status") not in {"pass", "pass_with_notes"}
-            or visual.get("video_sha256") != clean_hash
-            or any(visual.get(field) is not True for field in planned_visual_review_fields(plan_data))
         ):
             return False
+        if strict_business_review:
+            visual = load_json(clean_visual_path)
+            if (
+                visual.get("status") not in {"pass", "pass_with_notes"}
+                or visual.get("video_sha256") != clean_hash
+                or any(visual.get(field) is not True for field in planned_visual_review_fields(plan_data))
+            ):
+                return False
         if subtitles_enabled:
             caption_path = project_dir / "visual-review.json"
             if not caption_path.exists():
@@ -84,7 +89,12 @@ def project_stage(project_dir: Path) -> dict:
         if technically_verified and reviews_ready():
             stage = "ready_to_finalize"
         elif technically_verified:
-            stage = "awaiting_business_review"
+            plan_data = load_json(plan) if plan.exists() else {}
+            stage = (
+                "awaiting_business_review"
+                if delivery_review_policy(plan_data) == "strict_business_review"
+                else "awaiting_technical_review"
+            )
         else:
             stage = "generating"
     elif confirmation.exists():
@@ -160,6 +170,7 @@ def create_confirmation(project_dir: Path, approved_by: str) -> dict:
 
 
 def poll_jobs(project_dir: Path, timeout: int, interval: int, require_audio: bool) -> tuple[int, dict]:
+    plan = load_json(project_dir / "generation-plan.json")
     ledger = load_json(project_dir / "jobs.json")
     results = []
     failed = False
@@ -183,6 +194,7 @@ def poll_jobs(project_dir: Path, timeout: int, interval: int, require_audio: boo
             command.append("--require-audio")
         code, data = run_worker(command)
         if code == 0:
+            strict_business_review = delivery_review_policy(plan) == "strict_business_review"
             transition_job(
                 project_dir,
                 ledger,
@@ -197,7 +209,7 @@ def poll_jobs(project_dir: Path, timeout: int, interval: int, require_audio: boo
                 shot_id,
                 "verified",
                 verification_scope="technical_media_only",
-                business_review_required=True,
+                business_review_required=strict_business_review,
             )
         else:
             transition_job(
