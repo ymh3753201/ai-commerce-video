@@ -10,7 +10,13 @@ import subprocess
 from pathlib import Path
 
 from _common import ScriptError, asset_value, is_url, load_json, require_ffmpeg, sha256_file, verify_media_file, write_json
-from _workflow import delivery_review_policy
+from _workflow import (
+    delivery_review_policy,
+    required_voice_review_fields,
+    voice_contract_review_required,
+    voice_review_errors,
+    voice_review_path,
+)
 
 
 QC_FAILURE_CODES = {
@@ -22,6 +28,7 @@ QC_FAILURE_CODES = {
     "QC_CTA_UNREADABLE": "redo local CTA packaging only",
     "QC_DURATION_SHORTFALL": "block delivery; do not disguise a missing commercial beat with a long static hold",
     "QC_SPEECH_MISSING": "block delivery when planned speech is missing or unintelligible",
+    "QC_UNPLANNED_SPEECH": "block delivery when a Stage 1 no-speech plan contains human speech",
     "QC_TALENT_MISMATCH": "block delivery when a person appears against plan or presenter identity/gender changes",
     "QC_VOICE_GENDER_MISMATCH": "block delivery when an explicitly approved female or male voice direction is not preserved",
     "QC_SOUND_DESIGN_MISSING": "block delivery when planned non-speech sound effects, ambience, or music are absent",
@@ -269,6 +276,8 @@ def main() -> int:
         stitch_pass = stitch_policy_pass(stitch_report, len(boundaries))
         comparisons = source_frame_comparisons(plan, project_dir)
         issues = expected_clip_errors(plan)
+        if str((plan.get("sound_design_contract") or {}).get("mode") or "") == "silent" and media.get("has_audio"):
+            issues.append("Stage 1 approved a fully silent delivery, but the rendered MP4 contains an audio stream")
         quality_contract = plan.get("quality_contract") or {}
         shortfall_limit = float(quality_contract.get("max_provider_duration_shortfall_seconds", 1.0))
         clip_duration_reviews = []
@@ -305,6 +314,12 @@ def main() -> int:
         review_policy = delivery_review_policy(plan)
         strict_business_review = review_policy == "strict_business_review"
         signal_screening = sound_signal_screening(plan, silences)
+        video_hash = sha256_file(video)
+        voice_review_required = voice_contract_review_required(plan)
+        voice_path = voice_review_path(project_dir, plan)
+        voice_review = load_json(voice_path) if voice_review_required and voice_path.exists() else {}
+        voice_errors = voice_review_errors(plan, voice_review, video_hash)
+        streamlined_reviews_ready = not voice_review_required or not voice_errors
         report = {
             "status": technical_status,
             "review_scope": "technical_media_only",
@@ -312,15 +327,21 @@ def main() -> int:
             "delivery_status": (
                 "pending_business_review"
                 if technical_status == "pass" and strict_business_review
+                else "awaiting_voice_review"
+                if technical_status == "pass" and voice_review_required and voice_errors
                 else "technical_ready"
                 if technical_status == "pass"
                 else "blocked_technical"
             ),
             "formal_delivery_approved": False,
-            "ready_to_finalize": technical_status == "pass" and not strict_business_review,
+            "ready_to_finalize": (
+                technical_status == "pass"
+                and not strict_business_review
+                and streamlined_reviews_ready
+            ),
             "delivery_review_policy": review_policy,
             "video": str(video),
-            "video_sha256": sha256_file(video),
+            "video_sha256": video_hash,
             "media": media,
             "actual_duration_seconds": actual_duration,
             "delivery_max_seconds": hard_max,
@@ -340,12 +361,19 @@ def main() -> int:
             "issues": issues,
             "multimodal_visual_review_required": strict_business_review,
             "multimodal_visual_review_available": True,
+            "voice_contract_review_required": voice_review_required,
+            "voice_review_file": str(voice_path) if voice_review_required else "",
+            "voice_review_fields": required_voice_review_fields(plan),
+            "voice_review_errors": voice_errors,
             "visual_review_fields": planned_visual_review_fields(plan),
             "qc_failure_code_catalog": QC_FAILURE_CODES,
             "selected_qc_failure_codes": [],
             "paid_repair_authorized": False,
             "acceptance_note": (
-                "Technical media checks are complete. Optional visual and listening review can record creative differences "
+                "Technical media checks are complete. The Stage 1 voice mode still needs the narrow voice-contract review; "
+                "this is an internal delivery check, not another user approval or paid retry authorization."
+                if voice_review_required and voice_errors else
+                "Technical media checks are complete. Optional visual review can record creative differences "
                 "without creating another mandatory user gate for the default workflow."
                 if not strict_business_review else
                 "Judge speech by intelligibility and approximate selling meaning, then record the required visual and listening fields."

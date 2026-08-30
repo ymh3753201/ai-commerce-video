@@ -825,8 +825,8 @@ class SkillValidationTests(unittest.TestCase):
             self.assertEqual(shot["prompt_contract"]["char_count"], len(prompt))
             self.assertEqual(shot["prompt_contract"]["budget_chars"], 2400)
             self.assertEqual(shot["prompt_contract"]["max_chars"], 4096)
-            self.assertEqual(shot["prompt_contract"]["compiler"], "director-commerce-v8")
-            self.assertEqual(shot["prompt_contract"]["architecture"], "universal-product-director-v4")
+            self.assertEqual(shot["prompt_contract"]["compiler"], "director-commerce-v10")
+            self.assertEqual(shot["prompt_contract"]["architecture"], "universal-product-director-v6")
             self.assertIn(spoken_script, prompt)
             self.assertEqual(prompt.count(spoken_script), 1)
             self.assertIn("Creative intent: premium_brand", prompt)
@@ -908,8 +908,8 @@ class SkillValidationTests(unittest.TestCase):
                 contract = plan["shots"][0]["prompt_contract"]
                 self.assertLessEqual(len(prompt), 1500)
                 self.assertEqual(prompt.count(speech), 1)
-                self.assertEqual(contract["compiler"], "director-commerce-v8")
-                self.assertEqual(contract["architecture"], "universal-product-director-v4")
+                self.assertEqual(contract["compiler"], "director-commerce-v10")
+                self.assertEqual(contract["architecture"], "universal-product-director-v6")
                 self.assertEqual(contract["included_components"], expected_components)
                 self.assertGreater(contract["available_visual_chars"], 0)
                 self.assertEqual(contract["visual_direction_char_count"], len(visual))
@@ -1863,7 +1863,7 @@ class SkillValidationTests(unittest.TestCase):
             self.assertEqual(summary["max_prompt_chars"], 4096)
             self.assertTrue(summary["within_budget"])
             self.assertTrue(summary["within_max"])
-            self.assertEqual(summary["compiler"], "director-commerce-v8")
+            self.assertEqual(summary["compiler"], "director-commerce-v10")
 
     def test_preflight_blocks_duplicate_spoken_script_even_if_length_contract_is_forged(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -2248,9 +2248,11 @@ class SkillValidationTests(unittest.TestCase):
             ])
             plan = json.loads(Path(json.loads(result.stdout)["plan"]).read_text(encoding="utf-8"))
             self.assertEqual(plan["creative_contract"]["creative_variant"], "commerce_direct")
+            self.assertEqual(plan["creative_contract"]["speaker_mode"], "no-speech")
             self.assertIn("conversion-focused product ad", plan["creative_contract"]["creative_variant_rule"])
             self.assertIn("Creative intent: commerce_direct", plan["shots"][0]["prompt"])
-            self.assertIn("VO=none", plan["shots"][0]["prompt"])
+            self.assertIn("Speech=none", plan["shots"][0]["prompt"])
+            self.assertIn("Voice=none", plan["shots"][0]["prompt"])
             self.assertNotIn("speaks to camera", plan["shots"][0]["prompt"])
 
     def test_story_reversal_prompt_contains_story_beats_and_cta(self):
@@ -2333,6 +2335,7 @@ class SkillValidationTests(unittest.TestCase):
                 "--project-root", str(tmp_path / "projects"),
                 "--product-image", str(product),
                 "--speaker-mode", "voiceover",
+                "--spoken-script", "这是一段画外功能讲解。",
                 "--product-motion-policy", "demonstrated-function",
                 "--prompt", "Use voiceover and captions for a functional product demo.",
             ])
@@ -2342,6 +2345,248 @@ class SkillValidationTests(unittest.TestCase):
             self.assertEqual(plan["creative_contract"]["product_motion_policy"], "demonstrated-function")
             self.assertIn("Use off-screen voiceover", shot_prompt)
             self.assertIn("real product function or mechanism", shot_prompt)
+
+    def test_stage_1_voiceover_with_visible_presenter_is_preserved(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            product = tmp_path / "product.png"
+            product.write_bytes(b"\x89PNG\r\n\x1a\n")
+            brief = tmp_path / "brief.json"
+            brief.write_text(json.dumps({
+                "speaker_mode": "voiceover",
+                "spoken_script": "坐下来轻轻一摇，让家的松弛感回来。",
+                "seller_persona": "approved adult female presenter who demonstrates silently",
+                "visual_design": {
+                    "talent_presence": "presenter",
+                    "talent_gender": "female",
+                    "talent_description": "Approved adult East Asian female presenter",
+                },
+            }, ensure_ascii=False), encoding="utf-8")
+            result = run_cmd([
+                "python3", str(SCRIPTS / "prepare_project.py"),
+                "--name", "Visible Presenter Speech",
+                "--project-root", str(tmp_path / "projects"),
+                "--product-image", str(product),
+                "--brief", str(brief),
+            ])
+            plan = json.loads(Path(json.loads(result.stdout)["plan"]).read_text(encoding="utf-8"))
+            prompt = plan["shots"][0]["prompt"]
+            self.assertEqual(plan["creative_contract"]["speaker_mode"], "voiceover")
+            self.assertEqual(
+                plan["creative_contract"]["speaker_mode_decision_source"],
+                "stage_1_visual_plan",
+            )
+            self.assertEqual(plan["audio_contract"]["speech_presentation"], "off_screen_voiceover")
+            self.assertIn("VO=“坐下来轻轻一摇，让家的松弛感回来。”", prompt)
+            self.assertIn("off-screen voiceover", prompt)
+            self.assertIn("demonstrates silently", prompt)
+            self.assertNotIn("Dialogue=“", prompt)
+
+    def test_stage_1_on_camera_presenter_speech_is_preserved(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            product = tmp_path / "product.png"
+            product.write_bytes(b"\x89PNG\r\n\x1a\n")
+            brief = tmp_path / "brief.json"
+            brief.write_text(json.dumps({
+                "speaker_mode": "digital-human-spoken",
+                "speech_presentation": "on_camera_presenter",
+                "spoken_script": "坐下来轻轻一摇，让家的松弛感回来。",
+                "visual_design": {
+                    "talent_presence": "presenter",
+                    "talent_gender": "female",
+                },
+            }, ensure_ascii=False), encoding="utf-8")
+            result = run_cmd([
+                "python3", str(SCRIPTS / "prepare_project.py"),
+                "--name", "Approved On Camera Speech",
+                "--project-root", str(tmp_path / "projects"),
+                "--product-image", str(product),
+                "--brief", str(brief),
+            ])
+            plan = json.loads(Path(json.loads(result.stdout)["plan"]).read_text(encoding="utf-8"))
+            prompt = plan["shots"][0]["prompt"]
+            self.assertEqual(plan["creative_contract"]["speaker_mode"], "digital-human-spoken")
+            self.assertEqual(plan["audio_contract"]["speech_presentation"], "on_camera_presenter")
+            self.assertIn("Dialogue=“坐下来轻轻一摇，让家的松弛感回来。”", prompt)
+            self.assertIn("visibly speaks", prompt)
+            self.assertIn("natural mouth movement", prompt)
+            self.assertNotIn("VO=“", prompt)
+
+    def test_stage_1_no_speech_presenter_keeps_environment_and_music_without_voice(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            product = tmp_path / "product.png"
+            product.write_bytes(b"\x89PNG\r\n\x1a\n")
+            brief = tmp_path / "brief.json"
+            brief.write_text(json.dumps({
+                "speaker_mode": "no-speech",
+                "speech_presentation": "none",
+                "visual_design": {
+                    "talent_presence": "presenter",
+                    "talent_gender": "female",
+                    "sound_design": {"mode": "layered_native"},
+                },
+            }, ensure_ascii=False), encoding="utf-8")
+            result = run_cmd([
+                "python3", str(SCRIPTS / "prepare_project.py"),
+                "--name", "Silent Presenter With Sound Design",
+                "--project-root", str(tmp_path / "projects"),
+                "--product-image", str(product),
+                "--brief", str(brief),
+            ])
+            plan = json.loads(Path(json.loads(result.stdout)["plan"]).read_text(encoding="utf-8"))
+            prompt = plan["shots"][0]["prompt"]
+            self.assertEqual(plan["creative_contract"]["speaker_mode"], "no-speech")
+            self.assertEqual(plan["audio_contract"]["speech_presentation"], "none")
+            self.assertFalse(plan["audio_contract"]["speech_required"])
+            self.assertTrue(plan["audio_contract"]["human_voice_forbidden"])
+            self.assertTrue(plan["sound_design_contract"]["non_speech_required"])
+            self.assertIn("Speech=none", prompt)
+            self.assertIn("Voice=none", prompt)
+            self.assertIn("Ambience=", prompt)
+            self.assertIn("Music=", prompt)
+            self.assertNotIn("Dialogue=“", prompt)
+            self.assertNotIn("VO=“", prompt)
+
+    def test_stage_1_speaker_mode_conflicts_are_blocked_instead_of_rewritten(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            product = tmp_path / "product.png"
+            product.write_bytes(b"\x89PNG\r\n\x1a\n")
+            brief = tmp_path / "brief.json"
+            brief.write_text(json.dumps({
+                "speaker_mode": "voiceover",
+                "speech_presentation": "off_screen_voiceover",
+                "spoken_script": "保持这段画外旁白。",
+            }, ensure_ascii=False), encoding="utf-8")
+            result = run_cmd_fail([
+                "python3", str(SCRIPTS / "prepare_project.py"),
+                "--name", "Voice Contract Drift",
+                "--project-root", str(tmp_path / "projects"),
+                "--product-image", str(product),
+                "--brief", str(brief),
+                "--speaker-mode", "digital-human-spoken",
+            ])
+            self.assertIn("differs from the approved Stage 1 visual plan", result.stdout)
+
+    def test_stage_1_mode_and_speech_presentation_conflict_is_blocked(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            product = tmp_path / "product.png"
+            product.write_bytes(b"\x89PNG\r\n\x1a\n")
+            brief = tmp_path / "brief.json"
+            brief.write_text(json.dumps({
+                "speaker_mode": "voiceover",
+                "speech_presentation": "on_camera_presenter",
+                "spoken_script": "冲突的声音方案。",
+            }, ensure_ascii=False), encoding="utf-8")
+            result = run_cmd_fail([
+                "python3", str(SCRIPTS / "prepare_project.py"),
+                "--name", "Conflicting Voice Contract",
+                "--project-root", str(tmp_path / "projects"),
+                "--product-image", str(product),
+                "--brief", str(brief),
+            ])
+            self.assertIn("Stage 1 voice contract conflicts", result.stdout)
+
+    def test_ambiguous_presenter_and_spoken_copy_requires_stage_1_decision(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            product = tmp_path / "product.png"
+            product.write_bytes(b"\x89PNG\r\n\x1a\n")
+            brief = tmp_path / "brief.json"
+            brief.write_text(json.dumps({
+                "spoken_script": "这句到底由谁说还没有决定。",
+                "visual_design": {"talent_presence": "presenter", "talent_gender": "female"},
+            }, ensure_ascii=False), encoding="utf-8")
+            result = run_cmd_fail([
+                "python3", str(SCRIPTS / "prepare_project.py"),
+                "--name", "Ambiguous Speaker",
+                "--project-root", str(tmp_path / "projects"),
+                "--product-image", str(product),
+                "--brief", str(brief),
+            ])
+            self.assertIn("does not say who speaks", result.stdout)
+
+    def test_brief_can_preserve_user_explicit_off_screen_voiceover(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            product = tmp_path / "product.png"
+            product.write_bytes(b"\x89PNG\r\n\x1a\n")
+            brief = tmp_path / "brief.json"
+            brief.write_text(json.dumps({
+                "speaker_mode": "voiceover",
+                "speaker_mode_source": "user_explicit",
+                "spoken_script": "这是一段用户明确选择的画外旁白。",
+                "visual_design": {"talent_presence": "presenter", "talent_gender": "female"},
+            }, ensure_ascii=False), encoding="utf-8")
+            result = run_cmd([
+                "python3", str(SCRIPTS / "prepare_project.py"),
+                "--name", "Explicit Off Screen Voiceover",
+                "--project-root", str(tmp_path / "projects"),
+                "--product-image", str(product),
+                "--brief", str(brief),
+            ])
+            plan = json.loads(Path(json.loads(result.stdout)["plan"]).read_text(encoding="utf-8"))
+            prompt = plan["shots"][0]["prompt"]
+            self.assertEqual(plan["creative_contract"]["speaker_mode"], "voiceover")
+            self.assertEqual(plan["audio_contract"]["speech_presentation"], "off_screen_voiceover")
+            self.assertIn("Use off-screen voiceover", prompt)
+            self.assertIn("VO=“这是一段用户明确选择的画外旁白。”", prompt)
+
+    def test_preflight_rejects_on_camera_speech_prompt_with_silent_contradiction(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            product = tmp_path / "product.png"
+            product.write_bytes(b"\x89PNG\r\n\x1a\n")
+            prepared = run_cmd([
+                "python3", str(SCRIPTS / "prepare_project.py"),
+                "--name", "Contradictory Speech Prompt",
+                "--project-root", str(tmp_path / "projects"),
+                "--product-image", str(product),
+                "--speaker-mode", "digital-human-spoken",
+                "--spoken-script", "这句口播必须由画面人物说出来。",
+            ])
+            plan_path = Path(json.loads(prepared.stdout)["plan"])
+            plan = json.loads(plan_path.read_text(encoding="utf-8"))
+            plan["shots"][0]["prompt"] = plan["shots"][0]["prompt"].replace(
+                "visibly speaks",
+                "demonstrates silently",
+            )
+            plan_path.write_text(json.dumps(plan, ensure_ascii=False, indent=2), encoding="utf-8")
+            result = run_cmd_fail([
+                "python3", str(SCRIPTS / "preflight_project.py"),
+                "--plan", str(plan_path),
+                "--config", str(CONFIG),
+            ])
+            self.assertIn("on-camera speech prompt", result.stdout)
+
+    def test_preflight_rejects_no_speech_prompt_with_injected_voiceover(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            product = tmp_path / "product.png"
+            product.write_bytes(b"\x89PNG\r\n\x1a\n")
+            prepared = run_cmd([
+                "python3", str(SCRIPTS / "prepare_project.py"),
+                "--name", "No Speech Contract Drift",
+                "--project-root", str(tmp_path / "projects"),
+                "--product-image", str(product),
+                "--speaker-mode", "no-speech",
+            ])
+            plan_path = Path(json.loads(prepared.stdout)["plan"])
+            plan = json.loads(plan_path.read_text(encoding="utf-8"))
+            plan["shots"][0]["prompt"] = plan["shots"][0]["prompt"].replace(
+                "Speech=none",
+                "VO=“这段旁白不在批准方案里”",
+            )
+            plan_path.write_text(json.dumps(plan, ensure_ascii=False, indent=2), encoding="utf-8")
+            result = run_cmd_fail([
+                "python3", str(SCRIPTS / "preflight_project.py"),
+                "--plan", str(plan_path),
+                "--config", str(CONFIG),
+            ])
+            self.assertIn("no-speech prompt", result.stdout)
 
     def test_mock_api_submit_poll_and_download(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -2496,6 +2741,9 @@ class SkillValidationTests(unittest.TestCase):
             proof_keyframe.write_bytes(b"generated-proof-keyframe")
             brief = tmp_path / "brief.json"
             brief.write_text(json.dumps({
+                "speaker_mode": "voiceover",
+                "speech_presentation": "off_screen_voiceover",
+                "spoken_script": "看见真实细节。",
                 "visual_design": {
                     "style_type": "cinematic_product_hero",
                     "reference_plan": [
@@ -2530,7 +2778,7 @@ class SkillValidationTests(unittest.TestCase):
             self.assertEqual(plan["references"][0]["provenance"], "generated_from_approved_visual_plan")
             self.assertEqual(plan["references"][1]["provenance"], "generated_from_approved_visual_plan")
             shot = plan["shots"][0]
-            self.assertEqual(shot["prompt_contract"]["compiler"], "director-commerce-v8")
+            self.assertEqual(shot["prompt_contract"]["compiler"], "director-commerce-v10")
             self.assertEqual(shot["prompt_contract"]["budget_chars"], 3000)
             self.assertEqual(shot["prompt_contract"]["camera_move"], "timecoded_per_beat")
             self.assertEqual(shot["continuity_mode"], "single_generation_timecoded_beats")
@@ -2606,7 +2854,7 @@ class SkillValidationTests(unittest.TestCase):
             plan = json.loads(plan_path.read_text(encoding="utf-8"))
             shot = plan["shots"][0]
             self.assertEqual(plan["plan_schema_version"], 3)
-            self.assertEqual(shot["prompt_contract"]["compiler"], "director-commerce-v8")
+            self.assertEqual(shot["prompt_contract"]["compiler"], "director-commerce-v10")
             self.assertEqual(shot["prompt"].count("AUDIO:"), 1)
             self.assertEqual(shot["prompt"].count("Cuts:"), 1)
             self.assertEqual(shot["prompt"].count("Reference image map:"), 1)
@@ -2720,6 +2968,8 @@ class SkillValidationTests(unittest.TestCase):
             brief = tmp_path / "brief.json"
             brief.write_text(json.dumps({
                 "duration_seconds": 15,
+                "speaker_mode": "voiceover",
+                "speech_presentation": "off_screen_voiceover",
                 "spoken_script": "看见真实细节，感受设计价值，现在了解更多。",
                 "visual_design": {
                     "talent_presence": "presenter",
@@ -2791,8 +3041,8 @@ class SkillValidationTests(unittest.TestCase):
             plan = json.loads(Path(json.loads(prepared.stdout)["plan"]).read_text(encoding="utf-8"))
             shot = plan["shots"][0]
             contract = shot["prompt_contract"]
-            self.assertEqual(contract["compiler"], "director-commerce-v8")
-            self.assertEqual(contract["architecture"], "universal-product-director-v4")
+            self.assertEqual(contract["compiler"], "director-commerce-v10")
+            self.assertEqual(contract["architecture"], "universal-product-director-v6")
             self.assertGreaterEqual(contract["creative_execution_ratio"], 0.50)
             self.assertLessEqual(contract["reference_map_ratio"], 0.25)
             self.assertEqual(contract["structural_block_counts"]["director_timeline"], 1)
@@ -2850,6 +3100,8 @@ class SkillValidationTests(unittest.TestCase):
             brief = tmp_path / "brief.json"
             brief.write_text(json.dumps({
                 "duration_seconds": 10,
+                "speaker_mode": "voiceover",
+                "speech_presentation": "off_screen_voiceover",
                 "spoken_script": "清透水感，让每日护理更加从容。",
                 "visual_design": {
                     "talent_presence": "presenter",
@@ -3160,6 +3412,7 @@ class SkillValidationTests(unittest.TestCase):
                 "--model-key", "grok_video_15",
                 "--product-category", "packaged food",
                 "--speaker-mode", "digital-human-spoken",
+                "--spoken-script", "这一口真实风味，值得现在品尝。",
             ])
             plan = json.loads(Path(json.loads(result.stdout)["plan"]).read_text(encoding="utf-8"))
             self.assertEqual(plan["creative_contract"]["talent_effects_contract"]["decision"], "director_judgment")
@@ -3233,6 +3486,7 @@ class SkillValidationTests(unittest.TestCase):
                 "--video-source-image", str(product),
                 "--model-key", "grok_video_15",
                 "--speaker-mode", "voiceover",
+                "--spoken-script", "看见商品细节，了解真实卖点。",
             ])
             plan = json.loads(Path(json.loads(result.stdout)["plan"]).read_text(encoding="utf-8"))
             prompt = plan["shots"][0]["prompt"].lower()
@@ -3378,8 +3632,8 @@ class SkillValidationTests(unittest.TestCase):
             audio_block = second["prompt"].split("AUDIO:", 1)[1]
             coverage = second["prompt_contract"]["sound_cue_coverage"]
 
-            self.assertEqual(second["prompt_contract"]["compiler"], "director-commerce-v8")
-            self.assertEqual(second["prompt_contract"]["architecture"], "universal-product-director-v4")
+            self.assertEqual(second["prompt_contract"]["compiler"], "director-commerce-v10")
+            self.assertEqual(second["prompt_contract"]["architecture"], "universal-product-director-v6")
             self.assertIn("sound on action", second["prompt"])
             self.assertIn("soft sole-contact accent aligned to the hero reveal", audio_block)
             self.assertIn("continuous quiet modern studio ambience", audio_block)

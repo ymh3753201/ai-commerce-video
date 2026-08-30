@@ -116,7 +116,9 @@
     },
     "video_prompt": ""
   },
-  "speaker_mode": "voiceover",
+  "speaker_mode": "no-speech",
+  "speaker_mode_source": "stage_1_director_decision",
+  "speech_presentation": "none",
   "voice_policy": "prompt_native",
   "voice_gender": "unspecified",
   "voice_description": "Describe language, tone, pace, emotion and advertising delivery in natural language.",

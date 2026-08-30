@@ -58,7 +58,7 @@ The Skill's default route adds a stricter advertising-production policy above th
 
 ## Native Speech, Sound Design, and Optional Preset Voice
 
-Ordinary spoken ads use prompt-native speech. Put the approved dialogue/VO and a concise language, tone, pace, emotion, or delivery description in the single `AUDIO` block, and omit `reference_audios`:
+Stage 1 chooses the voice relationship before reference generation. Spoken ads use prompt-native speech: put the approved dialogue/VO and a concise language, tone, pace, emotion, or delivery description in the single `AUDIO` block, and omit `reference_audios`. Use `Dialogue=` plus visible speaking/natural mouth movement for approved 人物口播; use `VO=` plus an off-screen direction for approved detached narration. For `no-speech`, use `Speech=none; Voice=none`, keep any visible presenter silent, and retain the approved non-speech sound layers. Never infer a different voice mode merely because a presenter reference exists.
 
 ```json
 {
@@ -66,13 +66,13 @@ Ordinary spoken ads use prompt-native speech. Put the approved dialogue/VO and a
 }
 ```
 
-原生音轨能力允许在同一个请求里要求人声和非人声层，但不保证 Provider 一定遵守每一层。Skill 默认把声音保存为独立的 `sound_design_contract`：`layered_native` 要求声音大创意、逐节拍可见动作同步音、环境声、原创器乐、能量曲线和混音；`ambience_led` 只在创意明确不要配乐时使用，但仍要求 SFX 和环境声；`voice_only` 必须显式选择。关键音效必须对应画面动作或切镜，并直接出现在该时间节拍的 `sound on action` 中；唯一 `AUDIO` 区块汇总本片段标志音、环境、音乐与混音。验证器检查这些语义字段和覆盖率，不要求提示词包含固定警告口号。
+原生音轨能力允许在同一个请求里要求人声和非人声层，但不保证 Provider 一定遵守每一层。Skill 默认把声音保存为独立的 `sound_design_contract`：`layered_native` 要求声音大创意、逐节拍可见动作同步音、环境声、原创器乐、能量曲线和混音；`ambience_led` 只在创意明确不要配乐时使用，但仍要求 SFX 和环境声；`voice_only` 只适用于明确有人声的方案；`silent` 仅用于全静音投放。`no-speech` 通常仍使用 `layered_native` 或 `ambience_led`，只是禁止人物对白和旁白。关键音效必须对应画面动作或切镜，并直接出现在该时间节拍的 `sound on action` 中；唯一 `AUDIO` 区块汇总本片段标志音、环境、音乐与混音。验证器检查这些语义字段和覆盖率，不要求提示词包含固定警告口号。
 
 每个视频生成请求都是独立音频上下文。多段广告必须在每个请求里重新写全具体乐器、节奏、质地、空间环境、标志音和混音，不得写“沿用上一段”或“same as previous”。这种自包含写法只能提高风格接近概率，不能保证独立片段拥有完全相同的旋律、音色或响度；精确连续配乐需要另行批准的本地后期混音。
 
 Generic xAI generation documentation mentions Video Extension, but this project has not verified an extension request for Grok Imagine Video 1.5 R2V through MikuAPI. The route remains disabled for extension and must not add a continuation request to a paid plan.
 
-Official R2V also defines optional `reference_audios` objects containing preset `voice_id` values, referenced as `<AUDIO_n>`. Use this only when the user explicitly selects a Provider preset and the configured route supports it. The default MikuAPI path does not require `/v1/tts/voices`, a preset ID, or `<AUDIO_0>`. A prompt with `<AUDIO_n>` but no matching payload is rejected. Neither prompt-native nor preset-conditioned speech guarantees frame-exact lip sync, and an output audio stream does not prove speech exists or is understandable.
+Official R2V also defines optional `reference_audios` objects containing preset `voice_id` values, referenced as `<AUDIO_n>`. Use this only when the user explicitly selects a Provider preset and the configured route supports it. The default MikuAPI path does not require `/v1/tts/voices`, a preset ID, or `<AUDIO_0>`. A prompt with `<AUDIO_n>` but no matching payload is rejected. Neither prompt-native nor preset-conditioned speech guarantees frame-exact lip sync, and an output audio stream does not prove speech exists or is understandable. Every spoken output must therefore pass the local speech-only review before formal delivery.
 
 Visible talent and voice are independent. The plan freezes `talent_presence` and optional presenter gender separately from `voice_gender`. Product-only prompts explicitly prohibit visible humans; an approved female/male presenter on the default R2V route requires a matching generated presenter reference. Prompt-native female/male voice direction must remain in the single `AUDIO` block and is checked after generation.
 

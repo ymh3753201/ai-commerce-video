@@ -499,13 +499,23 @@ class ProductionCoreTests(unittest.TestCase):
         workflow_engine = importlib.import_module("workflow_engine")
         spoken = {
             "creative_contract": {"speaker_mode": "digital-human-spoken"},
+            "audio_contract": {"speech_required": True},
+            "platform_contract": {"audio_policy": "recommended_with_captions"},
+        }
+        no_speech_with_sound = {
+            "creative_contract": {"speaker_mode": "no-speech"},
+            "audio_contract": {"speech_required": False},
+            "sound_design_contract": {"non_speech_required": True},
             "platform_contract": {"audio_policy": "recommended_with_captions"},
         }
         no_audio = {
             "creative_contract": {"speaker_mode": "silent-captions"},
+            "audio_contract": {"speech_required": False},
+            "sound_design_contract": {"non_speech_required": False},
             "platform_contract": {"audio_policy": "no_audio"},
         }
         self.assertTrue(workflow_engine.plan_requires_audio(spoken))
+        self.assertTrue(workflow_engine.plan_requires_audio(no_speech_with_sound))
         self.assertFalse(workflow_engine.plan_requires_audio(no_audio))
 
     def test_workflow_submit_posts_each_shot_at_most_once(self):
@@ -1108,6 +1118,189 @@ class ProductionCoreTests(unittest.TestCase):
             technical = {"status": "pass", "delivery_duration_hard_limit_pass": True, "video_sha256": "hash"}
             (project / "final-review.json").write_text(json.dumps(technical), encoding="utf-8")
             self.assertEqual(workflow_engine.project_stage(project)["stage"], "ready_to_finalize")
+
+    def test_spoken_default_policy_waits_for_narrow_voice_contract_review(self):
+        workflow_engine = importlib.import_module("workflow_engine")
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp)
+            plan = {
+                "quality_contract": {
+                    "delivery_review_policy": "technical_ready",
+                    "required_voice_contract_review": True,
+                },
+                "subtitle_plan": {"enabled": False},
+                "creative_contract": {"speaker_mode": "digital-human-spoken"},
+                "audio_contract": {
+                    "speech_required": True,
+                    "speech_mode": "digital-human-spoken",
+                    "speech_presentation": "on_camera_presenter",
+                },
+            }
+            jobs = {"jobs": {"shot_01": {"state": "verified", "verification_scope": "technical_media_only"}}}
+            (project / "generation-plan.json").write_text(json.dumps(plan), encoding="utf-8")
+            (project / "jobs.json").write_text(json.dumps(jobs), encoding="utf-8")
+            technical = {"status": "pass", "delivery_duration_hard_limit_pass": True, "video_sha256": "hash"}
+            (project / "final-review.json").write_text(json.dumps(technical), encoding="utf-8")
+            self.assertEqual(workflow_engine.project_stage(project)["stage"], "awaiting_voice_review")
+            voice_review = {
+                "status": "pass",
+                "video_sha256": "hash",
+                "speech_present": True,
+                "speech_intelligible": True,
+                "speech_meaning_preserved": True,
+                "presenter_speaks_on_camera": True,
+                "visible_mouth_movement": True,
+            }
+            (project / "voice-review.json").write_text(json.dumps(voice_review), encoding="utf-8")
+            self.assertEqual(workflow_engine.project_stage(project)["stage"], "ready_to_finalize")
+
+    def test_technical_ready_delivery_rejects_background_only_audio_as_speech(self):
+        finalize = importlib.import_module("finalize_project")
+        plan = {
+            "plan_schema_version": 3,
+            "quality_contract": {"delivery_review_policy": "technical_ready"},
+            "creative_contract": {"speaker_mode": "digital-human-spoken"},
+            "audio_contract": {
+                "speech_required": True,
+                "speech_mode": "digital-human-spoken",
+                "speech_presentation": "on_camera_presenter",
+            },
+            "production_contract": {
+                "base_request_count": 1,
+                "approved_paid_cap": 1,
+                "repair_reserve": 0,
+                "per_shot_repair_limit": 0,
+            },
+            "subtitle_plan": {"enabled": False},
+            "shots": [{"id": "shot_01"}],
+        }
+        jobs = {"jobs": [{"shot_id": "shot_01", "state": "verified", "submission_attempts": 1}]}
+        technical = {
+            "status": "pass",
+            "delivery_duration_hard_limit_pass": True,
+            "provider_duration_shortfall_pass": True,
+            "media": {"has_audio": True},
+        }
+        errors = finalize.delivery_errors(plan, jobs, technical, None, None, None)
+        self.assertTrue(any("voice contract review status" in error.lower() for error in errors))
+        self.assertTrue(any("background music" in error.lower() for error in errors))
+
+        verified_speech = {
+            "status": "pass",
+            "speech_present": True,
+            "speech_intelligible": True,
+            "speech_meaning_preserved": True,
+            "presenter_speaks_on_camera": True,
+            "visible_mouth_movement": True,
+        }
+        self.assertEqual(
+            finalize.delivery_errors(plan, jobs, technical, None, None, verified_speech),
+            [],
+        )
+
+    def test_technical_ready_delivery_rejects_unplanned_speech_in_no_speech_plan(self):
+        finalize = importlib.import_module("finalize_project")
+        plan = {
+            "plan_schema_version": 3,
+            "quality_contract": {
+                "delivery_review_policy": "technical_ready",
+                "required_voice_contract_review": True,
+            },
+            "creative_contract": {"speaker_mode": "no-speech"},
+            "audio_contract": {
+                "speech_required": False,
+                "speech_mode": "no-speech",
+                "speech_presentation": "none",
+            },
+            "production_contract": {
+                "base_request_count": 1,
+                "approved_paid_cap": 1,
+                "repair_reserve": 0,
+                "per_shot_repair_limit": 0,
+            },
+            "subtitle_plan": {"enabled": False},
+            "shots": [{"id": "shot_01"}],
+        }
+        jobs = {"jobs": [{"shot_id": "shot_01", "state": "verified", "submission_attempts": 1}]}
+        technical = {
+            "status": "pass",
+            "delivery_duration_hard_limit_pass": True,
+            "provider_duration_shortfall_pass": True,
+        }
+        failed_review = {"status": "blocked", "unexpected_speech_absent": False}
+        errors = finalize.delivery_errors(plan, jobs, technical, None, None, failed_review)
+        self.assertTrue(any("unplanned human speech" in error.lower() for error in errors))
+        passed_review = {"status": "pass", "unexpected_speech_absent": True}
+        self.assertEqual(
+            finalize.delivery_errors(plan, jobs, technical, None, None, passed_review),
+            [],
+        )
+
+    def test_review_voice_contract_records_on_camera_evidence_without_paid_call(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp)
+            video = project / "final.mp4"
+            make_test_video(video, duration=1.0, audio=True)
+            plan = {
+                "quality_contract": {
+                    "delivery_review_policy": "technical_ready",
+                    "required_voice_contract_review": True,
+                },
+                "subtitle_plan": {"enabled": False},
+                "creative_contract": {"speaker_mode": "digital-human-spoken"},
+                "audio_contract": {
+                    "speech_required": True,
+                    "speech_mode": "digital-human-spoken",
+                    "speech_presentation": "on_camera_presenter",
+                },
+            }
+            (project / "generation-plan.json").write_text(json.dumps(plan), encoding="utf-8")
+            result = run_cmd([
+                "python3", str(SCRIPTS / "review_voice_contract.py"),
+                "--project-dir", str(project),
+                "--review-method", "human_listening",
+                "--speech-present", "yes",
+                "--speech-intelligible", "yes",
+                "--speech-meaning-preserved", "yes",
+                "--presenter-speaks-on-camera", "yes",
+                "--visible-mouth-movement", "yes",
+            ])
+            report = json.loads(result.stdout)
+            self.assertEqual(report["status"], "pass")
+            self.assertFalse(report["paid_api_call"])
+            self.assertFalse(report["automatic_paid_retry_authorized"])
+            self.assertTrue((project / "voice-review.json").exists())
+
+    def test_review_voice_contract_records_no_unplanned_speech_for_no_speech_plan(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp)
+            video = project / "final.mp4"
+            make_test_video(video, duration=1.0, audio=True)
+            plan = {
+                "quality_contract": {
+                    "delivery_review_policy": "technical_ready",
+                    "required_voice_contract_review": True,
+                },
+                "subtitle_plan": {"enabled": False},
+                "creative_contract": {"speaker_mode": "no-speech"},
+                "audio_contract": {
+                    "speech_required": False,
+                    "speech_mode": "no-speech",
+                    "speech_presentation": "none",
+                },
+                "sound_design_contract": {"non_speech_required": True},
+            }
+            (project / "generation-plan.json").write_text(json.dumps(plan), encoding="utf-8")
+            result = run_cmd([
+                "python3", str(SCRIPTS / "review_voice_contract.py"),
+                "--project-dir", str(project),
+                "--review-method", "human_listening",
+                "--unexpected-speech-absent", "yes",
+            ])
+            report = json.loads(result.stdout)
+            self.assertEqual(report["status"], "pass")
+            self.assertEqual(report["required_fields"], ["unexpected_speech_absent"])
+            self.assertTrue((project / "voice-review.json").exists())
 
     def test_provider_trace_prefers_nested_upstream_task_and_supports_legacy_requests(self):
         poll_video = importlib.import_module("poll_video")

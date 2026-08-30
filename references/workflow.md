@@ -9,7 +9,7 @@ Use Codex itself for the intelligence layer:
 Use Codex `imagegen` / image2 as the approved local reference-image preparation path.
 
 - analyze uploaded product photos, model/person images, reference images, product info, price, duration, platform, and business intent with Codex's built-in multimodal understanding;
-- write the ad angle, selling points, storyboard, presenter spoken script, optional local-caption plan, sound direction, and clean-frame model prompts with Codex's built-in LLM reasoning;
+- write the ad angle, selling points, storyboard, Stage 1 voice contract (on-camera speech, off-screen voiceover, or no human voice), any required spoken copy, optional local-caption plan, sound direction, and clean-frame model prompts with Codex's built-in LLM reasoning;
 - before generating references, design the commercial idea, route-aware complete-beat storyboard, transitions and edit-safe boundaries, complete Reference Pack, image prompts, sound timeline, and final video-prompt blueprint; after Stage 1 approval, use Codex `imagegen` / image2 to regenerate every Provider-facing image from the supplied evidence, including the professional product master. Pass all trustworthy same-SKU product views together in `referenced_image_paths` whenever the output shows or depends on the product, and append person/scene/style evidence only when that control needs it;
 - do not introduce a separate LLM API, vision API, or image-generation API for these steps;
 - use the external video API only after confirmation, only for rendering the same confirmed source/reference images into MP4 video.
@@ -18,8 +18,8 @@ Use Codex `imagegen` / image2 as the approved local reference-image preparation 
 
 Avoid a long interview or many micro-approvals. Make conservative assumptions and label them. Use exactly two meaningful gates for ordinary professional multi-reference work:
 
-1. Stage 1 creative approval: show the product understanding, one recommended ad direction, 15-second storyboard/script, motivated cuts, reference portfolio, every planned image prompt, and the final video-prompt blueprint. No reference generation or video API call occurs before this approval.
-2. Stage 2 asset and paid approval: after preparing every actual reference and completing no-cost preflight, show the ordered `<IMAGE_n>` set, final prompt meaning, subtitle choice, and exact paid request count. `确认并生成` approves only this frozen set.
+1. Stage 1 creative approval: show the product understanding, one recommended ad direction, 15-second storyboard/script, motivated cuts, explicit speaking subject or no-human-voice decision, remaining sound layers, reference portfolio, every planned image prompt, and the final video-prompt blueprint. No reference generation or video API call occurs before this approval.
+2. Stage 2 asset and paid approval: after preparing every actual reference and completing no-cost preflight, show the ordered `<IMAGE_n>` set, the same frozen voice/sound meaning, final prompt meaning, subtitle choice, and exact paid request count. `确认并生成` approves only this frozen set.
 
 Do not split Stage 1 into separate approvals for concept, script, storyboard and prompts. Do not split Stage 2 into separate approvals for images, preflight and payment.
 
@@ -29,7 +29,7 @@ Default video settings:
 - aspect ratio: follow `platform_contract`; default to 9:16 for Douyin, TikTok, Reels, Shorts, and Xiaohongshu, and use 16:9 for Amazon Sponsored Brands Video, Amazon Sponsored Products Video, and many product-page videos unless the user chooses another placement-specific format;
 - resolution: 720p unless the user asks for 1080p or the model route requires another value;
 - structure: split by the selected route's reliable planning ceiling. Current MikuAPI R2V uses at most 10 seconds per planned request (`15s = 10+5`); official xAI R2V documents one request up to 15 seconds. Exact-first-frame I2V remains an explicit higher-cost route.
-- speaker/talent mode: freeze `talent_presence=none|hands_only|presenter`, optional visible-presenter gender, and voice gender as separate facts. Product category is context, not a hard prohibition. `none` explicitly forbids all visible humans; an explicit female/male presenter requires a matching generated control on the default R2V route. Never invent a mechanism, prop, efficacy, or self-moving inanimate product.
+- speaker/talent mode: freeze `talent_presence=none|hands_only|presenter` separately from `speaker_mode=digital-human-spoken|voiceover|no-speech`. `silent-captions` is reserved for a fully silent placement. The director chooses from the user's task, images, platform and creative logic; a visible presenter may speak, demonstrate silently under voiceover, or perform silently with only environment/music. Optional visible-presenter gender and voice gender remain separate facts. Product category is context, not a hard prohibition. `none` explicitly forbids all visible humans; an explicit female/male presenter requires a matching generated control on the default R2V route. Never invent a mechanism, prop, efficacy, or self-moving inanimate product.
 - product motion policy: ordinary physical products are inanimate/passive by default; do not let the product blink, speak, walk, breathe, gesture, change expression, or act alive.
 - creative variants: in the normal fast path, Codex selects one professional AI recommendation automatically and may show one concise alternative as an optional revision direction. Expand to a multi-version matrix only for an explicit A/B or batch-testing request. In review-first mode, the user can reply `按 AI 推荐` without understanding model or editing terminology.
 - default selected variant after explicit choice: `commerce_direct` unless the user selects `story_reversal`, `hybrid`, or accepts a different AI recommendation.
@@ -72,7 +72,7 @@ Save every trustworthy same-SKU item in one ordered `product_identity_evidence` 
 
 When designing the ad, explicitly decide:
 
-- speaker mode: use director judgment; choose full person, partial body, hands, or no person according to desire, trust, scale, use proof, emotion, and the approved sound strategy;
+- speaker mode and speaking subject: use director judgment from the task and image evidence, then explicitly choose `digital-human-spoken`, `voiceover`, or `no-speech` in Stage 1. “人物口播/主播口播/人物讲话/对镜讲解” means the visible presenter speaks when that is the selected plan; `voiceover` keeps any visible presenter silent; `no-speech` forbids human speech while allowing approved SFX, ambience and music. Record the decision source. After approval, never infer a different mode from presenter presence, generated references or the existence of copy;
 - product motion policy: `static-inanimate` for plushies, toys, accessories, decor, tools, packaging, home goods, fashion, beauty packaging, and most physical products;
 - what moves: presenter, hands, camera, platform, lighting, background, packaging, or a real demonstrated product mechanism;
 - what must stay stable: product identity, shape, face/print, color, logos, texture, and proportions.
@@ -97,9 +97,9 @@ Use this sequence for an ordinary request:
 4. Internal contracts: record platform, scene, safe-zone, compliance notes, CTA, and model capability in `generation-plan.json`; do not expand them in the ordinary user-facing proposal unless requested.
 5. AI recommendation: apply the best version by default and explain the reason briefly. If recommending `hybrid`, explain how the hook and direct selling parts are balanced.
 6. Stage 1: show the complete plan, image prompts, reference roles and video-prompt blueprint; wait for approval.
-7. Image preparation: generate the complete Reference Pack from the approved plan, save each full-size image locally, keep the first-slot product master faithful to the evidence, generate any storyboard preview separately, and let the compiler assign tokens in exact payload order.
+7. Image preparation: generate the complete Reference Pack from the approved plan, save each full-size image locally, keep the first-slot product master faithful to the evidence, generate any storyboard preview separately, and let the compiler assign tokens in exact payload order. The presence of a generated presenter control does not change the approved voice mode.
 8. No-cost preparation: execute `prepare_project.py -> preflight_project.py`. Configuration and platform validators remain internal development diagnostics; they do not create more user-facing gates.
-9. Stage 2: show the actual ordered images, final prompt meaning, speech, subtitle choice, settings, and paid request count.
+9. Stage 2: show the actual ordered images, final prompt meaning, the same Stage 1 speaking subject or no-human-voice state, remaining sound layers, subtitle choice, settings, and paid request count.
 10. Final authorization: accept `确认并生成` or an equally clear instruction given while viewing that exact set, then execute `workflow_engine.py confirm/submit/resume`.
 
 Choose the approval image set from the selected model capability:
@@ -132,7 +132,7 @@ Always include only the decision essentials:
 2. one selected AI recommendation with compact storyboard and approximate spoken copy;
 3. one short optional revision direction, only when useful;
 4. the actual local source/reference images that will be submitted;
-5. platform, ratio, total duration, long-video split, speaker mode, and exact paid request count;
+5. platform, ratio, total duration, long-video split, speaker mode, plain-language speaking subject (画面人物/画外旁白/无语音), and exact paid request count;
 6. subtitle choice: off by default, or local postproduction after the clean video;
 7. one confirmation line using `确认并生成` and stating that no automatic retry or extra paid request will be added.
 
@@ -160,9 +160,9 @@ Keep the complete advertising strategy in the plan contracts. The exact Provider
 4. `factual_guardrail`: one always-present supplied-facts-only rule;
 5. `reference_identity`: one canonical source/reference binding rule;
 6. `render_guardrails`: clean frame, speech mode and product-motion policy;
-7. `audio`: quoted dialogue/VO, natural-language voice direction, sonic idea, a compact link to the time-aligned sound-on-action cues already written beside each visible beat, the clip's signature SFX, continuous ambience, score/energy relationship, compact mix direction, and optional user-selected voice reference.
+7. `audio`: quoted `Dialogue`/`VO` for spoken plans, or `Speech=none; Voice=none` for no-human-voice plans, plus the approved sonic idea, a compact link to time-aligned sound-on-action cues, clip signature SFX, continuous ambience, score/energy relationship, compact mix direction, and optional user-selected voice reference only for spoken plans.
 
-`prepare_project.py` records plan schema v3, director compiler `director-commerce-v8` and the `universal-product-director-v4` architecture in each shot's `prompt_contract`. It includes exact/component lengths, creative execution ratio, reference-map ratio, guardrail/audio ratios, action density, recommended prompt range, per-beat camera moves, removed duplicate blocks, `available_visual_chars`, and `sound_cue_coverage`. Sound coverage is a rewrite diagnostic and appears as a preflight warning when incomplete; it does not block an otherwise valid image/video request. Platform/scenario/compliance/billing details stay in `generation-plan.json`. The compiler still hard-enforces exactly one of `Cuts` or `Sequence`, one reference map when references exist, and one `AUDIO` section. If essential approved content cannot fit the route's internal workflow budget, rewrite the visual direction—never truncate approved dialogue or identity rules. `max_prompt_chars` and `prompt_budget_chars` are adapter/workflow limits with explicit provenance, not an xAI-published universal character limit.
+`prepare_project.py` records plan schema v3, director compiler `director-commerce-v10` and the `universal-product-director-v6` architecture in each shot's `prompt_contract`. It includes exact/component lengths, creative execution ratio, reference-map ratio, guardrail/audio ratios, action density, recommended prompt range, per-beat camera moves, removed duplicate blocks, `available_visual_chars`, and `sound_cue_coverage`. Sound coverage is a rewrite diagnostic and appears as a preflight warning when incomplete; it does not block an otherwise valid image/video request. Platform/scenario/compliance/billing details stay in `generation-plan.json`. The compiler hard-enforces exactly one of `Cuts` or `Sequence`, one reference map when references exist, one `AUDIO` section, and a non-contradictory frozen Stage 1 voice presentation: on-camera `Dialogue=`, off-screen `VO=`, or no-human-voice `Speech=none; Voice=none`. Mode, presentation and spoken-script conflicts stop before Stage 2; no later heuristic rewrites them. If essential approved content cannot fit the route's internal workflow budget, rewrite the visual direction—never truncate approved dialogue or identity rules. `max_prompt_chars` and `prompt_budget_chars` are adapter/workflow limits with explicit provenance, not an xAI-published universal character limit.
 
 Before compiling split requests, allocate each semantic storyboard beat whole to one clip and reflow its local time. Because independent requests share no native audio state, restate the full instrument/rhythm/texture, ambience, signature SFX and mix inside every clip; never write “same as previous” or “沿用上一段”. `continuity_plan.edit_boundaries` and `stitching_plan.edit_boundaries` must record the outgoing stable state, incoming state, completed-action cut reason and audio bridge. `stitch_clips.py` preserves PCM intermediates and a single final AAC encode, then records that boundary, sound-continuity and loudness review are still required. Exact identical music across clips requires a separately approved local post mix.
 
@@ -218,13 +218,21 @@ Before compiling split requests, allocate each semantic storyboard beat whole to
    python3 ai-commerce-video/scripts/stitch_clips.py --project-dir <project> --target-resolution 720x1280 --target-fps 30 --require-audio
    ```
 
-7. Review the clean output technically. Source-versus-first-frame comparisons and business listening remain available as optional evidence:
+7. Review the clean output technically. Source-versus-first-frame comparisons and full business listening remain available as optional evidence:
 
    ```bash
    python3 ai-commerce-video/scripts/review_render.py --project-dir <project> --video <project>/final.mp4 --clean
    ```
 
-   New default plans report `delivery_status=technical_ready` after these checks. They do not wait for another mandatory business-review gate. Legacy plans remain `pending_business_review` for compatibility.
+   A new non-silent plan reports `awaiting_voice_review` until the narrow Stage 1 voice-contract report is recorded. Legacy plans remain `pending_business_review` for compatibility.
+
+   For a spoken plan, listen/inspect the clean MP4 and record only the required voice facts. For a visible presenter, confirm both the audible line and visible speaking/mouth movement:
+
+   ```bash
+   python3 ai-commerce-video/scripts/review_voice_contract.py --project-dir <project> --review-method codex_multimodal --speech-present yes --speech-intelligible yes --speech-meaning-preserved yes --presenter-speaks-on-camera yes --visible-mouth-movement yes
+   ```
+
+   For off-screen voiceover, omit the last two presenter flags. For `no-speech`, use only `--unexpected-speech-absent yes`. This internal check creates no user confirmation, no Provider request and no paid-retry authorization. A failed report blocks delivery and preserves the existing one-submit ledger.
 
 8. When the confirmed subtitle plan is enabled, generate and burn subtitles locally after clean review. Never send caption instructions back to the Provider:
 
@@ -267,7 +275,7 @@ Do not report completion only because a request was submitted. Completion requir
 - MP4 downloaded locally and ffprobe-validated;
 - multi-clip final video normalized, stitched, and ffprobe-validated if needed;
 - stitch report saved when stitching is used;
-- required technical review passed; optional business-review findings are recorded when requested;
+- required technical review passed; the narrow Stage 1 voice-contract review passed for new non-silent plans, including absence of unplanned human speech for `no-speech`; optional full business-review findings are recorded when requested;
 - caption review passed when subtitles are enabled;
 - paid submission count did not exceed the confirmed cap;
 - `delivery-manifest.json` exists with `status=pass`;

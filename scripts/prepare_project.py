@@ -16,7 +16,13 @@ from subtitle_policy import enabled_subtitle_contract_errors, subtitle_plan_from
 from subtitle_profiles import resolve_subtitle_profile
 
 
-SPEAKER_MODES = ("digital-human-spoken", "voiceover", "silent-captions")
+SPEAKER_MODES = ("digital-human-spoken", "voiceover", "no-speech", "silent-captions")
+SPEECH_PRESENTATION_BY_MODE = {
+    "digital-human-spoken": "on_camera_presenter",
+    "voiceover": "off_screen_voiceover",
+    "no-speech": "none",
+    "silent-captions": "none",
+}
 PRODUCT_MOTION_POLICIES = ("static-inanimate", "demonstrated-function", "live-subject", "software-screen", "liquid-food")
 CREATIVE_VARIANTS = (
     "commerce_direct",
@@ -72,8 +78,8 @@ VIDEO_SOURCE_ROLE_PRIORITY = (
     "product_presenter",
 )
 PLAN_SCHEMA_VERSION = 3
-PROMPT_COMPILER_VERSION = "director-commerce-v8"
-PROMPT_ARCHITECTURE = "universal-product-director-v4"
+PROMPT_COMPILER_VERSION = "director-commerce-v10"
+PROMPT_ARCHITECTURE = "universal-product-director-v6"
 CAMERA_MOVES = (
     "push_in", "pull_back", "pan", "tilt", "orbit", "track", "locked_macro", "static",
     "crane", "pedestal", "handheld_follow", "dolly_zoom", "zoom", "whip_pan",
@@ -82,7 +88,7 @@ SHOT_MODES = ("commercial_montage", "continuous_sequence")
 AD_STYLE_TYPES = ("cinematic_product_hero", "use_demo", "lifestyle", "unboxing_macro", "ugc_spoken", "before_after")
 TALENT_PRESENCE_VALUES = ("none", "hands_only", "presenter")
 GENDER_VALUES = ("female", "male", "unspecified", "not_applicable")
-SOUND_DESIGN_MODES = ("layered_native", "ambience_led", "voice_only")
+SOUND_DESIGN_MODES = ("layered_native", "ambience_led", "voice_only", "silent")
 PRESET_VOICE_PROFILES = {
     "altair": "premium advertising, luxury beauty, fragrance and cinematic brand films",
     "carina": "warm wellness, care and calm explanatory delivery",
@@ -585,6 +591,151 @@ def normalize_brief(raw: dict) -> dict:
     return brief
 
 
+def resolve_speaker_mode(
+    cli_mode: str | None,
+    brief: dict,
+    platform_audio_policy: str,
+    spoken_script: str,
+    generated_references: list[dict],
+) -> tuple[str, str]:
+    """Freeze the Stage 1 voice decision without silently changing it during production."""
+    visual = brief.get("visual_design") if isinstance(brief.get("visual_design"), dict) else {}
+    top_level_mode = str(brief.get("speaker_mode") or "").strip()
+    visual_mode = str(visual.get("speaker_mode") or "").strip()
+    if top_level_mode and visual_mode and top_level_mode != visual_mode:
+        raise ScriptError(
+            "Stage 1 voice contract drifts inside the brief: speaker_mode and "
+            "visual_design.speaker_mode must match"
+        )
+    brief_mode = top_level_mode or visual_mode
+    if brief_mode:
+        brief_mode = coerce_choice(brief_mode, SPEAKER_MODES, "speaker_mode")
+
+    top_level_presentation = str(brief.get("speech_presentation") or "").strip()
+    visual_presentation = str(visual.get("speech_presentation") or "").strip()
+    if top_level_presentation and visual_presentation and top_level_presentation != visual_presentation:
+        raise ScriptError(
+            "Stage 1 voice contract drifts inside the brief: speech_presentation and "
+            "visual_design.speech_presentation must match"
+        )
+    brief_presentation = top_level_presentation or visual_presentation
+    presentation_modes = {
+        "on_camera_presenter": "digital-human-spoken",
+        "off_screen_voiceover": "voiceover",
+        "none": "no-speech",
+    }
+    if brief_presentation and brief_presentation not in presentation_modes:
+        raise ScriptError(
+            "speech_presentation must be on_camera_presenter, off_screen_voiceover, or none"
+        )
+    if brief_mode and brief_presentation:
+        expected = SPEECH_PRESENTATION_BY_MODE[brief_mode]
+        if expected != brief_presentation:
+            raise ScriptError(
+                "Stage 1 voice contract conflicts: "
+                f"speaker_mode={brief_mode} requires speech_presentation={expected}, "
+                f"not {brief_presentation}"
+            )
+    if not brief_mode and brief_presentation:
+        brief_mode = presentation_modes[brief_presentation]
+
+    normalized_cli_mode = coerce_choice(cli_mode, SPEAKER_MODES, "speaker_mode") if cli_mode else ""
+    if normalized_cli_mode and brief_mode and normalized_cli_mode != brief_mode:
+        raise ScriptError(
+            "The requested speaker mode differs from the approved Stage 1 visual plan; "
+            "revise and reconfirm Stage 1 instead of silently changing the production mode"
+        )
+
+    if platform_audio_policy == "no_audio":
+        planned_mode = brief_mode or normalized_cli_mode
+        if planned_mode and planned_mode != "silent-captions":
+            raise ScriptError(
+                "This placement has no audio. Stage 1 must explicitly use silent-captions; "
+                f"it cannot preserve speaker_mode={planned_mode}"
+            )
+        if spoken_script.strip():
+            raise ScriptError("A no-audio placement cannot preserve an approved spoken script")
+        return "silent-captions", "stage_1_platform_no_audio"
+
+    if normalized_cli_mode:
+        selected_mode = normalized_cli_mode
+        decision_source = "stage_1_cli_contract"
+    elif brief_mode:
+        selected_mode = brief_mode
+        decision_source = str(
+            brief.get("speaker_mode_source")
+            or visual.get("speaker_mode_source")
+            or "stage_1_visual_plan"
+        ).strip()
+    else:
+        selected_mode = ""
+        decision_source = ""
+
+    user_intent = " ".join(
+        str(brief.get(key) or "")
+        for key in ("user_request", "original_request", "requirements", "request")
+    )
+    on_camera_pattern = (
+        r"口播带货|人物口播|主播口播|人物讲话|人物说话|面对镜头|对镜讲解|出镜讲解|"
+        r"\bon[- ]camera\b|\btalking presenter\b|\bspeaks? to camera\b|\bugc spoken\b"
+    )
+    voiceover_pattern = r"画外音|画外旁白|只要旁白|\boff[- ]screen voiceover\b|\bdetached narration\b"
+    no_speech_pattern = (
+        r"无人声|没有人声|不要人声|不要口播|无口播|无旁白|只有环境音|只有背景音|只有背景音乐|"
+        r"\bno (?:human )?(?:speech|voice|narration)\b|\bbackground music only\b|\bambience only\b"
+    )
+    if not selected_mode:
+        matched_intents = []
+        if re.search(on_camera_pattern, user_intent, flags=re.IGNORECASE):
+            matched_intents.append(("digital-human-spoken", "user_on_camera_intent"))
+        if re.search(voiceover_pattern, user_intent, flags=re.IGNORECASE):
+            matched_intents.append(("voiceover", "user_off_screen_intent"))
+        if re.search(no_speech_pattern, user_intent, flags=re.IGNORECASE):
+            matched_intents.append(("no-speech", "user_no_speech_intent"))
+        if len({item[0] for item in matched_intents}) > 1:
+            raise ScriptError(
+                "The user request contains conflicting voice directions. Stage 1 must choose one speaking subject before reference generation"
+            )
+        if matched_intents:
+            selected_mode, decision_source = matched_intents[0]
+
+    reference_roles = {
+        str(item.get("role") or "").strip().lower()
+        for item in generated_references
+        if str(item.get("role") or "").strip()
+    }
+    talent_presence = str(visual.get("talent_presence") or brief.get("talent_presence") or "").strip().lower()
+    style_type = str(visual.get("style_type") or brief.get("style_type") or "").strip().lower()
+    creative_variant = str(brief.get("creative_variant") or "").strip().lower()
+    presenter_planned = (
+        talent_presence == "presenter"
+        or bool(reference_roles.intersection({"presenter", "wardrobe"}))
+        or style_type == "ugc_spoken"
+        or creative_variant in {"ugc_review", "live_shopping_teaser"}
+    )
+    if not selected_mode:
+        if spoken_script.strip() and presenter_planned:
+            raise ScriptError(
+                "Stage 1 includes both a visible presenter and spoken copy but does not say who speaks. "
+                "Set speaker_mode/speech_presentation to on-camera presenter or off-screen voiceover before Stage 2"
+            )
+        if spoken_script.strip():
+            selected_mode, decision_source = "voiceover", "stage_1_product_led_inference"
+        else:
+            selected_mode, decision_source = "no-speech", "stage_1_no_spoken_copy_inference"
+
+    has_script = bool(spoken_script.strip())
+    if selected_mode in {"digital-human-spoken", "voiceover"} and not has_script:
+        raise ScriptError(
+            f"speaker_mode={selected_mode} requires an approved spoken_script in the Stage 1 plan"
+        )
+    if selected_mode in {"no-speech", "silent-captions"} and has_script:
+        raise ScriptError(
+            f"speaker_mode={selected_mode} conflicts with spoken_script; remove the script or revise and reconfirm Stage 1"
+        )
+    return selected_mode, decision_source
+
+
 def normalize_key(value: str | None) -> str:
     text = (value or "").strip().lower()
     text = re.sub(r"[^a-z0-9]+", "_", text)
@@ -849,6 +1000,8 @@ def build_model_capability_contract(model: dict) -> dict:
         "supports_native_speech_output": bool(
             model.get("supports_native_speech_output", model.get("supports_lip_sync", supports_audio))
         ),
+        "prompt_native_speech_output_status": model.get("prompt_native_speech_output_status")
+        or "provider_specific_requires_output_review",
         "native_sound_design_prompting": model.get("native_sound_design_prompting") or "provider_specific",
         "native_sound_layers_guaranteed": bool(model.get("native_sound_layers_guaranteed", False)),
         "native_sound_delivery_strategy": model.get("native_sound_delivery_strategy") or "prompt_directed_best_effort",
@@ -889,6 +1042,18 @@ def sanitize_prompt_text(prompt: str, speaker_mode: str, product_motion_policy: 
             (r"\boff-screen voiceover\b", "on-camera presenter speech"),
             (r"\bvoiceover\b", "on-camera presenter speech"),
             (r"\bnarrator\b", "presenter"),
+        ]
+        for pattern, replacement in replacements:
+            text = re.sub(pattern, replacement, text, flags=re.IGNORECASE)
+    elif speaker_mode in {"no-speech", "silent-captions"}:
+        replacements = [
+            (r"\bChinese voiceover and captions\b", "silent visual storytelling"),
+            (r"\bvoiceover and captions\b", "silent visual storytelling"),
+            (r"\bvoiceover/captions\b", "silent visual storytelling"),
+            (r"\boff-screen voiceover\b", "no spoken voice"),
+            (r"\bon-camera presenter speech\b", "silent presenter performance"),
+            (r"\bvoiceover\b", "no spoken voice"),
+            (r"\bnarrator\b", "silent visual storytelling"),
         ]
         for pattern, replacement in replacements:
             text = re.sub(pattern, replacement, text, flags=re.IGNORECASE)
@@ -1127,23 +1292,90 @@ def build_talent_contract(
     }
 
 
-def talent_prompt_instruction(talent_contract: dict, speaker_mode: str, seller_persona: str, has_dialogue: bool) -> str:
+def talent_prompt_instruction(talent_contract: dict, speaker_mode: str, _seller_persona: str, has_dialogue: bool) -> str:
     presence = str(talent_contract.get("presence") or "none")
     gender = str(talent_contract.get("gender") or "unspecified")
     if presence == "none":
-        speech = "Use off-screen voiceover." if speaker_mode == "voiceover" else ""
+        speech = (
+            "Use off-screen voiceover."
+            if speaker_mode == "voiceover"
+            else "Use no spoken dialogue, narration, or voiceover."
+            if speaker_mode in {"no-speech", "silent-captions"}
+            else ""
+        )
         return f"{speech} No person, face, body, hand, or human silhouette appears.".strip()
     if presence == "hands_only":
-        speech = "Use off-screen voiceover." if speaker_mode == "voiceover" else ""
+        speech = (
+            "Use off-screen voiceover."
+            if speaker_mode == "voiceover"
+            else "Use no spoken dialogue, narration, or voiceover."
+            if speaker_mode in {"no-speech", "silent-captions"}
+            else ""
+        )
         return f"{speech} Show only the approved hands; no face, body, presenter, or human silhouette appears.".strip()
     gender_label = {"female": "adult female", "male": "adult male"}.get(gender, "")
-    subject = " ".join(value for value in ["approved", gender_label, seller_persona] if value).strip()
+    subject = " ".join(value for value in ("approved", gender_label, "presenter") if value)
     exclusion = " Do not substitute a presenter of another gender." if gender in {"female", "male"} else ""
     if speaker_mode == "digital-human-spoken" and has_dialogue:
-        return f"Only the {subject} may appear and speaks to camera with natural lip sync.{exclusion}".strip()
+        return (
+            f"Only {subject} appears, faces camera and visibly speaks with natural mouth movement; mouth clear."
+            f"{exclusion}"
+        ).strip()
     if speaker_mode == "digital-human-spoken":
         return f"Only the {subject} may appear and demonstrates silently; use no unscripted dialogue.{exclusion}".strip()
-    return f"Use off-screen voiceover. Only the {subject} may appear and demonstrates silently.{exclusion}".strip()
+    if speaker_mode == "voiceover":
+        return f"Use off-screen voiceover. Only the {subject} may appear and demonstrates silently.{exclusion}".strip()
+    return (
+        f"Use no spoken dialogue, narration, or voiceover. Only the {subject} may appear and demonstrates silently."
+        f"{exclusion}"
+    ).strip()
+
+
+def validate_speech_prompt_contract(compiled: str, speaker_mode: str, has_dialogue: bool) -> None:
+    """Reject drift between the approved Stage 1 voice contract and the Provider prompt."""
+    normalized = compiled.casefold()
+    if speaker_mode == "digital-human-spoken":
+        if not has_dialogue:
+            raise ScriptError("On-camera presenter speech requires approved spoken copy")
+        required = {
+            "Dialogue=": "on-camera speech must use Dialogue= in the AUDIO block",
+            "visibly speaks": "the presenter must be instructed to visibly speak",
+            "natural mouth movement": "visible mouth movement must be requested",
+        }
+        for marker, message in required.items():
+            if marker.casefold() not in normalized:
+                raise ScriptError(message)
+        contradictions = ("off-screen voiceover", "demonstrates silently", "vo=“")
+        found = [value for value in contradictions if value in normalized]
+        if found:
+            raise ScriptError(f"On-camera presenter prompt contains voiceover/silent contradictions: {found}")
+    elif speaker_mode == "voiceover":
+        if not has_dialogue:
+            raise ScriptError("Off-screen narration requires approved spoken copy")
+        if "vo=“" not in normalized or "off-screen voiceover" not in normalized:
+            raise ScriptError("Off-screen narration must use VO= and explicitly keep the voice off camera")
+        contradictions = ("dialogue=“", "visibly speaks", "speaks to camera", "on-camera presenter speech")
+        found = [value for value in contradictions if value in normalized]
+        if found:
+            raise ScriptError(f"Voiceover prompt contains on-camera speaking contradictions: {found}")
+    elif speaker_mode in {"no-speech", "silent-captions"}:
+        if has_dialogue:
+            raise ScriptError(f"speaker_mode={speaker_mode} cannot compile approved spoken copy")
+        required = ("speech=none", "voice=none", "no spoken dialogue, narration, or voiceover")
+        missing = [value for value in required if value not in normalized]
+        if missing:
+            raise ScriptError(f"No-speech prompt is missing explicit voice exclusions: {missing}")
+        contradictions = (
+            "dialogue=“",
+            "vo=“",
+            "visibly speaks",
+            "speaks to camera",
+            "off-screen voiceover.",
+            "on-camera presenter speech",
+        )
+        found = [value for value in contradictions if value in normalized]
+        if found:
+            raise ScriptError(f"No-speech prompt contains spoken-voice contradictions: {found}")
 
 
 def validate_talent_references(
@@ -2013,8 +2245,9 @@ def build_sound_design_contract(
     brief_data: dict,
     director_clips: list[dict],
     native_provider_sound: bool,
+    speaker_mode: str,
 ) -> dict:
-    """Build a compact commercial sound plan without requiring a preset voice."""
+    """Build non-speech sound layers that preserve the approved voice mode."""
     visual = brief_data.get("visual_design") if isinstance(brief_data.get("visual_design"), dict) else {}
     supplied = visual.get("sound_design") if isinstance(visual.get("sound_design"), dict) else {}
     if not supplied and isinstance(brief_data.get("sound_design"), dict):
@@ -2028,19 +2261,35 @@ def build_sound_design_contract(
     def is_none(value: object) -> bool:
         return str(value or "").strip().lower() in {"", "none", "no", "off", "silent", "no music"}
 
-    if requested_mode:
+    if speaker_mode == "silent-captions":
+        if requested_mode and requested_mode != "silent":
+            raise ScriptError(
+                "speaker_mode=silent-captions conflicts with an audible sound_design.mode; revise Stage 1"
+            )
+        mode = "silent"
+    elif requested_mode:
         mode = requested_mode
     elif director_clips and all(is_none(clip.get("music")) for clip in director_clips):
         mode = "ambience_led"
     else:
         mode = "layered_native"
+    if speaker_mode == "no-speech" and mode == "voice_only":
+        raise ScriptError(
+            "speaker_mode=no-speech cannot use sound_design.mode=voice_only; choose layered_native, ambience_led, or silent"
+        )
+    if speaker_mode in {"digital-human-spoken", "voiceover"} and mode == "silent":
+        raise ScriptError(f"speaker_mode={speaker_mode} cannot use sound_design.mode=silent")
     non_speech_required = mode != "voice_only"
+    if mode == "silent":
+        non_speech_required = False
     required_layers = {
         "sfx": non_speech_required,
         "ambience": non_speech_required,
         "music": mode == "layered_native",
     }
-    if mode == "voice_only":
+    if mode == "silent":
+        music_policy = "all_audio_absent"
+    elif mode == "voice_only":
         music_policy = "none_explicit"
     elif mode == "ambience_led":
         music_policy = "ambience_led_no_music"
@@ -2063,13 +2312,17 @@ def build_sound_design_contract(
     clip_sound_map = []
     beat_cue_map = []
     for clip in director_clips:
-        sfx_prompt, sfx_removed = self_contained_sound_direction(clip.get("sfx"), signature_sfx, "SFX")
-        ambience_prompt, ambience_removed = self_contained_sound_direction(
-            clip.get("ambience"), ambience_bed, "ambience"
-        )
-        music_prompt, music_removed = self_contained_sound_direction(
-            clip.get("music"), score_palette, "music"
-        )
+        if mode == "silent":
+            sfx_prompt, ambience_prompt, music_prompt = "none", "none", "none"
+            sfx_removed = ambience_removed = music_removed = 0
+        else:
+            sfx_prompt, sfx_removed = self_contained_sound_direction(clip.get("sfx"), signature_sfx, "SFX")
+            ambience_prompt, ambience_removed = self_contained_sound_direction(
+                clip.get("ambience"), ambience_bed, "ambience"
+            )
+            music_prompt, music_removed = self_contained_sound_direction(
+                clip.get("music"), score_palette, "music"
+            )
         clip_removed = sfx_removed + ambience_removed + music_removed
         clip_sound_map.append({
             "clip_id": clip.get("clip_id"),
@@ -2084,11 +2337,14 @@ def build_sound_design_contract(
             "cross_clip_dependency_terms_removed": clip_removed,
         })
         for beat in clip.get("beat_timeline") or []:
-            prompt_sound_cue, cue_removed = self_contained_sound_direction(
-                beat.get("sound_cue"),
-                sonic_idea,
-                "cue",
-            )
+            if mode == "silent":
+                prompt_sound_cue, cue_removed = "none", 0
+            else:
+                prompt_sound_cue, cue_removed = self_contained_sound_direction(
+                    beat.get("sound_cue"),
+                    sonic_idea,
+                    "cue",
+                )
             clip_removed += cue_removed
             beat_cue_map.append({
                 "clip_id": clip.get("clip_id"),
@@ -2118,9 +2374,13 @@ def build_sound_design_contract(
         "native_cross_clip_audio_state_shared": False,
         "exact_score_continuity_requires_local_post_mix": True,
         "mix_direction": (
+            "No audio of any kind"
+            if mode == "silent" else
+            "SFX and ambience clear; original instrumental supports the visual rhythm; no human voice"
+            if speaker_mode == "no-speech" else
             "voice clear; SFX audible on action; continuous ambience and score audible under speech"
             if non_speech_required else
-            "Voice-only was explicitly selected; music, ambience and effects remain absent."
+            "Voice-only was explicitly selected; music, ambience and effects remain absent"
         ),
         "verification_required": non_speech_required,
         "verification_method": "human or multimodal listening; an AAC track alone is not proof of planned sound layers",
@@ -2183,9 +2443,8 @@ def compile_model_prompt(
             else "product-led visual storytelling"
         )
         prompt = (
-            f"{seconds}-second vertical e-commerce product ad segment for {project_name}. "
-            "Show the hero product clearly, preserve product appearance, use clean commercial lighting, "
-            f"smooth camera motion, {performance}, and a clear selling moment."
+            f"{seconds}s vertical commerce ad for {project_name}. Preserve the hero product; "
+            f"clean commercial light, smooth camera, {performance}, clear selling moment."
         )
     original_speech_occurrences = prompt.count(spoken_script.strip()) if spoken_script.strip() else 0
     prompt, removed_structural_blocks = remove_manual_structural_blocks(prompt)
@@ -2279,7 +2538,11 @@ def compile_model_prompt(
     if non_speech_required and required_layers.get("ambience") and "continuous" not in prompt_ambience.casefold():
         prompt_ambience = f"continuous {prompt_ambience}"
     if non_speech_required and required_layers.get("music") and "audib" not in prompt_music.casefold():
-        prompt_music = f"audible under speech: {prompt_music}"
+        prompt_music = (
+            f"audible as the visual rhythm bed: {prompt_music}"
+            if speaker_mode == "no-speech"
+            else f"audible under speech: {prompt_music}"
+        )
     beat_prompt_cues = []
     for beat in beat_timeline:
         mapped = sound_beats.get(str(beat.get("beat_id") or "")) or {}
@@ -2291,8 +2554,14 @@ def compile_model_prompt(
     else:
         cue_summary = prompt_sfx
     sonic_idea = str(sound_design_contract.get("sonic_idea") or "product action becomes a sonic signature")
+    if speaker_mode == "digital-human-spoken":
+        speech_clause = f"Dialogue={quoted_speech}"
+    elif speaker_mode == "voiceover":
+        speech_clause = f"VO={quoted_speech}"
+    else:
+        speech_clause = "Speech=none"
     audio_line = (
-        f'AUDIO: {"Dialogue" if speaker_mode == "digital-human-spoken" else "VO"}={quoted_speech}; '
+        f'AUDIO: {speech_clause}; '
         f'Voice={voice_direction}{voice_reference}; '
         f'SonicIdea={sonic_idea}; '
         f'Cues={cue_summary}; '
@@ -2416,6 +2685,7 @@ def compile_model_prompt(
         )
     if re.search(r",\s*,", compiled):
         raise ScriptError("Provider prompt contains an empty comma-delimited instruction")
+    validate_speech_prompt_contract(compiled, speaker_mode, bool(spoken_script.strip()))
     component_char_counts = {item["name"]: len(item["text"]) for item in active}
     creative_component_names = {"director_action", "visual_direction", "creative_intent", "audio"}
     creative_execution_chars = sum(
@@ -2513,7 +2783,12 @@ def main() -> int:
     parser.add_argument("--language", default="zh", help="Spoken language used for pacing estimates and semantic segmentation")
     parser.add_argument("--brief", help="Optional project brief JSON")
     parser.add_argument("--config", help="Path to model config JSON")
-    parser.add_argument("--speaker-mode", choices=SPEAKER_MODES, default=None, help="Presenter/speech mode. Default: voiceover, or silent-captions for no-audio placements")
+    parser.add_argument(
+        "--speaker-mode",
+        choices=SPEAKER_MODES,
+        default=None,
+        help="Stage 1 voice contract: visible presenter speech, off-screen voiceover, no human speech, or a fully silent placement",
+    )
     parser.add_argument("--product-motion-policy", choices=PRODUCT_MOTION_POLICIES, default=None, help="How the product is allowed to move. Default: static-inanimate")
     parser.add_argument("--creative-variant", choices=CREATIVE_VARIANTS, default=None, help="Approved creative variant. Default: commerce_direct")
     parser.add_argument("--reference-strategy", choices=REFERENCE_STRATEGIES, default=None, help="Approved image/reference strategy. Default: auto")
@@ -2640,11 +2915,14 @@ def main() -> int:
             raise ScriptError(f"Segment source images must be contiguous from shot_01. Got indices: {actual_indices}")
         product_category = args.product_category or brief_data.get("product_category") or "unknown"
         talent_effects_contract = build_talent_effects_contract(product_category)
-        if selected_platform_profile.get("audio_policy") == "no_audio":
-            default_speaker_mode = "silent-captions"
-        else:
-            default_speaker_mode = "voiceover"
-        speaker_mode = coerce_choice(args.speaker_mode or brief_data.get("speaker_mode") or default_speaker_mode, SPEAKER_MODES, "speaker_mode")
+        spoken_script = args.spoken_script or brief_data.get("spoken_script") or brief_data.get("script") or ""
+        speaker_mode, speaker_mode_decision_source = resolve_speaker_mode(
+            args.speaker_mode,
+            brief_data,
+            str(selected_platform_profile.get("audio_policy") or ""),
+            spoken_script,
+            generated_references,
+        )
         product_motion_policy = coerce_choice(args.product_motion_policy or brief_data.get("product_motion_policy") or "static-inanimate", PRODUCT_MOTION_POLICIES, "product_motion_policy")
         creative_variant = coerce_choice(args.creative_variant or brief_data.get("creative_variant") or "commerce_direct", CREATIVE_VARIANTS, "creative_variant")
         commerce_scenario = coerce_choice(args.commerce_scenario or brief_data.get("commerce_scenario") or "auto", COMMERCE_SCENARIOS, "commerce_scenario")
@@ -2682,7 +2960,6 @@ def main() -> int:
         marketplace_locale = args.marketplace_locale or brief_data.get("marketplace_locale") or "unspecified"
         safe_zone_profile = args.safe_zone_profile or brief_data.get("safe_zone_profile") or selected_platform_profile.get("safe_zone_profile") or "center_80_percent"
         subtitle_style = args.subtitle_style or brief_data.get("subtitle_style") or "short high-contrast captions inside safe zone"
-        spoken_script = args.spoken_script or brief_data.get("spoken_script") or brief_data.get("script") or ""
         brief_preset_voice_ids = brief_data.get("preset_voice_ids") or []
         preset_voice_ids = args.voice_id or brief_preset_voice_ids
         preset_voice_source = (
@@ -2693,6 +2970,8 @@ def main() -> int:
         if isinstance(preset_voice_ids, str):
             preset_voice_ids = [preset_voice_ids]
         preset_voice_ids = [str(value).strip() for value in preset_voice_ids if str(value).strip()]
+        if preset_voice_ids and not spoken_script.strip():
+            raise ScriptError("Preset voice references require approved spoken_script in the Stage 1 voice contract")
         voice_description = str(
             args.voice_description
             or brief_data.get("voice_description")
@@ -2877,9 +3156,13 @@ def main() -> int:
             brief_data,
             director_clip_contracts,
             native_provider_sound=bool(model.get("supports_audio")),
+            speaker_mode=speaker_mode,
         )
         creative_contract = {
             "speaker_mode": speaker_mode,
+            "speaker_mode_decision_source": speaker_mode_decision_source,
+            "speech_presentation": SPEECH_PRESENTATION_BY_MODE[speaker_mode],
+            "stage_1_voice_contract_frozen": True,
             "product_motion_policy": product_motion_policy,
             "creative_variant": creative_variant,
             "creative_variant_rule": creative_variant_contract(creative_variant, platform),
@@ -3000,7 +3283,11 @@ def main() -> int:
             "language": language,
             "native_provider_audio": bool(model.get("supports_audio")),
             "speech_mode": speaker_mode,
+            "speech_presentation": SPEECH_PRESENTATION_BY_MODE[speaker_mode],
+            "speaker_mode_decision_source": speaker_mode_decision_source,
             "speech_required": bool(spoken_script.strip()),
+            "human_voice_required": speaker_mode in {"digital-human-spoken", "voiceover"},
+            "human_voice_forbidden": speaker_mode in {"no-speech", "silent-captions"},
             "voice_policy": voice_policy,
             "voice_id": preset_voice_ids[0] if len(preset_voice_ids) == 1 else "",
             "voice_selection_reason": voice_selection_reason,
@@ -3008,9 +3295,16 @@ def main() -> int:
             "voice_gender": voice_gender,
             "voice_prompt_token": "<AUDIO_0>" if preset_voice_ids else "",
             "speech_verification_required": bool(spoken_script.strip()),
+            "presenter_speech_visual_verification_required": bool(
+                spoken_script.strip() and speaker_mode == "digital-human-spoken"
+            ),
             "dialogue_prompt_contains_approved_script": True,
             "provider_output_word_for_word_guaranteed": False,
-            "delivery_acceptance": "speech_intelligible_and_main_selling_meaning_preserved",
+            "delivery_acceptance": (
+                "speech_intelligible_and_main_selling_meaning_preserved"
+                if spoken_script.strip()
+                else "no_unplanned_human_voice"
+            ),
             "preset_voice_ids": preset_voice_ids,
             "preset_voice_source": preset_voice_source,
             "reference_audio_field": model.get("reference_audio_field") or "",
@@ -3045,6 +3339,10 @@ def main() -> int:
             "post_generation_business_review_available": True,
             "sound_review_blocking": False,
             "speech_verification_required": bool(spoken_script.strip()),
+            "required_speech_review": bool(spoken_script.strip()),
+            "required_speech_review_scope": "speech_only_no_extra_user_approval",
+            "required_voice_contract_review": speaker_mode != "silent-captions",
+            "required_voice_contract_review_scope": "voice_presence_and_presentation_only_no_extra_user_approval",
             "audio_track_is_not_speech_proof": True,
             "audio_track_is_not_sound_design_proof": True,
             "planned_non_speech_sound_verification_required": sound_design_contract["verification_required"],

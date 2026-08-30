@@ -35,6 +35,96 @@ def delivery_review_policy(plan: dict) -> str:
     return value if value in {"technical_ready", "strict_business_review"} else "strict_business_review"
 
 
+def speech_presentation(plan: dict) -> str:
+    """Return the approved relationship between speech and the visible talent."""
+    audio = plan.get("audio_contract") or {}
+    explicit = str(audio.get("speech_presentation") or "")
+    if explicit in {"on_camera_presenter", "off_screen_voiceover", "none"}:
+        return explicit
+    speaker_mode = str(
+        audio.get("speech_mode")
+        or (plan.get("creative_contract") or {}).get("speaker_mode")
+        or ""
+    )
+    return {
+        "digital-human-spoken": "on_camera_presenter",
+        "voiceover": "off_screen_voiceover",
+        "no-speech": "none",
+        "silent-captions": "none",
+    }.get(speaker_mode, "none")
+
+
+def voice_contract_review_required(plan: dict) -> bool:
+    """Require one narrow check that the rendered voice mode matches Stage 1."""
+    audio = plan.get("audio_contract") or {}
+    quality = plan.get("quality_contract") or {}
+    if delivery_review_policy(plan) != "technical_ready":
+        return False
+    if "required_voice_contract_review" in quality:
+        return bool(quality.get("required_voice_contract_review"))
+    return bool(audio.get("speech_required"))
+
+
+def required_voice_review_fields(plan: dict) -> list[str]:
+    if not voice_contract_review_required(plan):
+        return []
+    presentation = speech_presentation(plan)
+    if presentation == "none":
+        return ["unexpected_speech_absent"]
+    fields = ["speech_present", "speech_intelligible", "speech_meaning_preserved"]
+    if presentation == "on_camera_presenter":
+        fields.extend(["presenter_speaks_on_camera", "visible_mouth_movement"])
+    return fields
+
+
+def voice_review_path(project_dir: Path, plan: dict) -> Path:
+    suffix = ".clean" if bool((plan.get("subtitle_plan") or {}).get("enabled")) else ""
+    quality = plan.get("quality_contract") or {}
+    filename = "voice-review" if "required_voice_contract_review" in quality else "speech-review"
+    return project_dir / f"{filename}{suffix}.json"
+
+
+def voice_review_errors(plan: dict, review: dict | None, clean_video_sha256: str = "") -> list[str]:
+    """Validate only voice presence/presentation, not the complete creative sound mix."""
+    if not voice_contract_review_required(plan):
+        return []
+    review = review or {}
+    errors: list[str] = []
+    if review.get("status") not in {"pass", "pass_with_notes"}:
+        errors.append("Required voice contract review status is not pass/pass_with_notes")
+    messages = {
+        "speech_present": "Planned speech is missing; background music or an AAC track is not speech proof",
+        "speech_intelligible": "Planned speech was not verified as intelligible",
+        "speech_meaning_preserved": "The approved selling meaning was not approximately preserved",
+        "presenter_speaks_on_camera": "The approved on-camera presenter was not verified as the speaking person",
+        "visible_mouth_movement": "Visible presenter mouth movement was not verified during the approved speech",
+        "unexpected_speech_absent": "The approved no-speech plan contains or may contain unplanned human speech",
+    }
+    for field in required_voice_review_fields(plan):
+        if review.get(field) is not True:
+            errors.append(messages[field])
+    if clean_video_sha256 and review.get("video_sha256") != clean_video_sha256:
+        errors.append("Voice contract review video hash does not match the clean video")
+    return errors
+
+
+def separate_speech_review_required(plan: dict) -> bool:
+    """Compatibility helper for callers that only need to know whether speech is planned."""
+    return voice_contract_review_required(plan) and speech_presentation(plan) != "none"
+
+
+def required_speech_review_fields(plan: dict) -> list[str]:
+    return required_voice_review_fields(plan) if separate_speech_review_required(plan) else []
+
+
+def speech_review_path(project_dir: Path, plan: dict) -> Path:
+    return voice_review_path(project_dir, plan)
+
+
+def speech_review_errors(plan: dict, review: dict | None, clean_video_sha256: str = "") -> list[str]:
+    return voice_review_errors(plan, review, clean_video_sha256)
+
+
 def atomic_write_json(path: Path, data: dict) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_name(f".{path.name}.{os.getpid()}.tmp")

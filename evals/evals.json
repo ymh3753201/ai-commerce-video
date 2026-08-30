@@ -76,7 +76,7 @@
     {
       "id": 13,
       "prompt": "我给你一张香水商品图，请用 grok-imagine-video-1.5 的多参考图能力做 15 秒高端带货广告。先让我看专业视觉方案、脚本、每张图片提示词和视频提示词；我同意后再生成参考图，最后确认后调用 API。",
-      "expected_output": "Should use the default MikuAPI-relayed grok-imagine-video-1.5 reference-to-video contract, keep the supplied perfume original in input_evidence_assets only, establish the universal product director profile, commercial proposition and explicit talent contract, then regenerate IMAGE_0 as a faithful professional product master followed preferably by Hook and Proof/Payoff full-screen keyframes. director-commerce-v8 should allocate complete motivated beats into the reliable 10+5 request plan without duplicating one action across clips, render each action-synchronized sound cue beside its beat, and give every independent request a self-contained AUDIO contract with dialogue/VO, natural-language voice direction, sonic idea, signature SFX, ambience, score and mix without same-as-previous shorthand. It should generate no references before approval, keep storyboard grids review-only, send no reference_audios unless the user explicitly requests a preset voice, and show the configured zero-based route order plus exact two paid requests in Stage 2; raw REST must use reference_images and must not include image.",
+      "expected_output": "Should use the default MikuAPI-relayed grok-imagine-video-1.5 reference-to-video contract, keep the supplied perfume original in input_evidence_assets only, establish the universal product director profile, commercial proposition, explicit talent contract and one explicit Stage 1 voice mode, then regenerate IMAGE_0 as a faithful professional product master followed preferably by Hook and Proof/Payoff full-screen keyframes. director-commerce-v10 should allocate complete motivated beats into the reliable 10+5 request plan without duplicating one action across clips, render each action-synchronized sound cue beside its beat, and give every independent request a self-contained AUDIO contract with the approved Dialogue/VO/Speech=none relationship, voice direction when applicable, sonic idea, signature SFX, ambience, score and mix without same-as-previous shorthand. It should generate no references before approval, keep storyboard grids review-only, send no reference_audios unless the user explicitly requests a preset voice for an approved spoken plan, and show the configured zero-based route order plus exact two paid requests in Stage 2; raw REST must use reference_images and must not include image.",
       "files": []
     },
     {
@@ -112,7 +112,7 @@
     {
       "id": 19,
       "prompt": "请证明这个 Skill 不是只会做美妆或汽车：我可能上传服装、家具、食品、宠物用品、厨房电器、软件界面或一个无法确定品类的商品单图。普通用户都只提供商品图和一句‘做 15 秒商业广告’，先给方案，不要付费生成。",
-      "expected_output": "Should run every item through the same evidence-driven universal product director profile and director-commerce-v8/universal-product-director-v4 architecture rather than category-keyword prompt templates. It should adapt only structured product form, interaction, proof and talent-value dimensions; infer one truthful commercial proposition, 1-4 duration-appropriate complete beats, the smallest generated Reference Pack, and a sonic idea with timed visible-action cues; keep all raw uploads in evidence, show the route-aware paid topology, and stop at Stage 1 with no paid call.",
+      "expected_output": "Should run every item through the same evidence-driven universal product director profile and director-commerce-v10/universal-product-director-v6 architecture rather than category-keyword prompt templates. It should adapt only structured product form, interaction, proof and talent-value dimensions; infer one truthful commercial proposition, an explicit Stage 1 voice mode, 1-4 duration-appropriate complete beats, the smallest generated Reference Pack, and a sonic idea with timed visible-action cues; keep all raw uploads in evidence, show the route-aware paid topology, and stop at Stage 1 with no paid call.",
       "files": []
     },
     {
@@ -124,13 +124,25 @@
     {
       "id": 21,
       "prompt": "这条黑白运动鞋 15 秒广告计划里有人声、脚步音、空间环境声和背景音乐，但成片听起来只有人声。请判断是模型还是 Skill 的问题，优化后不要自动重新付费。",
-      "expected_output": "Should inspect the frozen plan, exact per-clip prompts, payload evidence, source clips and stitched master before assigning blame; identify lost SFX or cross-request shorthand as prompt-quality issues; disclose that native sound is Provider best-effort; keep director-commerce-v8 sound-on-action guidance; report incomplete coverage/listening results as advisory findings; preserve the paid ledger; and make no paid retry.",
+      "expected_output": "Should inspect the frozen plan, exact per-clip prompts, payload evidence, source clips and stitched master before assigning blame; identify lost SFX or cross-request shorthand as prompt-quality issues; disclose that native sound is Provider best-effort; keep director-commerce-v10 sound-on-action guidance; report incomplete coverage/listening results as advisory findings; preserve the paid ledger; and make no paid retry.",
       "files": []
     },
     {
       "id": 22,
       "prompt": "我上传了同一件商品的正面、背面和模特实穿图，还上传了一张纯场景灵感图。生成商品主控图、模特图和广告关键帧时请保持商品完全一致，但不要把无关图片全塞给图片模型。先生成参考图，不要调用付费视频。",
       "expected_output": "Should classify the three trustworthy same-SKU views as product evidence, keep the pure scene image role-specific, use sufficient product references for product-dependent imagegen outputs, and save the actual generated images. Missing detailed input IDs/paths/hashes or AI QC should be an advisory warning rather than a Stage 2 blocker; the user confirms the actual full-size images; no extra approval or paid video request is added.",
+      "files": []
+    },
+    {
+      "id": 23,
+      "prompt": "我要做人物口播带货视频，方案里有女主播和中文口播稿。成片有背景音乐但主播没有讲话、嘴也没有动。请修复流程，但不要自动重新付费生成。",
+      "expected_output": "Should preserve the approved Stage 1 on-camera presenter relationship; record speaker_mode=digital-human-spoken and speech_presentation=on_camera_presenter; compile exactly one Dialogue AUDIO block with visible speaking and natural mouth movement while rejecting off-screen/silent contradictions; distinguish an AAC/music track from actual speech; require the narrow output-bound voice-contract review before delivery; keep the two user approvals and one-submit ledger unchanged; and make no automatic paid retry.",
+      "files": []
+    },
+    {
+      "id": 24,
+      "prompt": "请根据我上传的商品图和任务自动设计广告。第一版方案如果选人物口播，就让人物讲话；如果选画外旁白，就让画面人物保持静默；如果选无人声，就只保留环境音、动作音效和背景音乐。方案确认后不允许后面的步骤自行改型。",
+      "expected_output": "Should use director judgment to choose exactly one Stage 1 voice contract from digital-human-spoken, voiceover, or no-speech and show the plain-language speaking subject before reference generation. Later preparation must preserve the approved mode even when a presenter reference exists: Dialogue plus visible mouth movement for on-camera speech, VO plus a silent presenter for voiceover, or Speech=none and Voice=none while retaining approved non-speech sound for no-speech. Conflicting CLI, brief, presentation, or script fields must block before Stage 2 rather than being auto-rewritten. The narrow voice-contract review should verify the selected outcome without another user approval or paid retry.",
       "files": []
     }
   ]

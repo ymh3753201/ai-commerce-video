@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Added `director-commerce-v10` / `universal-product-director-v6` Stage 1 voice semantics. The director now freezes on-camera presenter speech, off-screen voiceover, or no human speech from the approved task and images; visible talent never silently rewrites that choice later. `no-speech` keeps approved SFX, ambience, and music while compiling `Speech=none; Voice=none`.
+- Added a narrow output-bound `voice-review.json` contract for new non-silent plans. It verifies required speech and presentation for spoken plans, or absence of unplanned human speech for `no-speech`, without adding another user approval or authorizing paid retries. Legacy speech-review paths remain readable.
+
 - Closed the legacy direct paid-submit bypass: real Provider POSTs now require the immutable workflow confirmation, readiness binding, frozen production contract, paid cap and one-submit ledger.
 - Bound free readiness to the exact Provider/model/base URL/network route used for paid POST, and reject credentialed polling URLs on a different host.
 - Stopped auto-filling image-generation input and QC evidence, isolated the optional 119337 credential, and made private env writes atomic.

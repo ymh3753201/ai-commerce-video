@@ -11,7 +11,7 @@ Use this reference after every generated clip is downloaded. A playable MP4 is n
 
 ## 2. Clean Technical Review
 
-`review_render.py` writes a legacy top-level `status` for compatibility, but its scope is explicitly `review_scope=technical_media_only`. New default plans report `delivery_status=technical_ready` after required media checks; legacy strict plans report `pending_business_review`. `finalize_project.py` remains responsible for the delivery manifest.
+`review_render.py` writes a legacy top-level `status` for compatibility, but its scope is explicitly `review_scope=technical_media_only`. New non-silent plans report `awaiting_voice_review` until the narrow Stage 1 voice-contract report below passes; legacy strict plans report `pending_business_review`. `finalize_project.py` remains responsible for the delivery manifest.
 
 - Final duration stays within `delivery_max_seconds` plus the small probe tolerance.
 - Compare each downloaded Provider clip with its approved request duration. A shortfall over one second blocks delivery; do not extend a 5–10 second result to 15 seconds with a long frozen last frame. The only normal end hold is about one second.
@@ -22,7 +22,28 @@ Use this reference after every generated clip is downloaded. A playable MP4 is n
 
 The report's `sound_signal_screening` is a no-cost warning based on detected silence and the plan's expected continuous sound bed. It can flag `QC_SOUND_DESIGN_MISSING` as a candidate when long silence conflicts with the plan, but it is not speech recognition, source separation, or a listening verdict. It must never turn `planned_sfx_audible`, `planned_ambience_audible`, `planned_music_audible`, or `audio_mix_balanced` true by itself.
 
-## 3. Optional Clean Multimodal Business Review
+## 3. Required Voice-Contract Review
+
+For new non-silent plans, technical audio-stream detection is insufficient to prove the Stage 1 voice choice. Listen to and inspect the exact clean MP4, then run `review_voice_contract.py` to bind `voice-review.json` (or `voice-review.clean.json` before local captions) to its SHA-256.
+
+Every spoken plan requires:
+
+- `speech_present=true`: actual human speech exists; music, ambience, effects or an AAC stream do not count;
+- `speech_intelligible=true`: the speech can be understood by listening or a reliable local transcription plus listening check;
+- `speech_meaning_preserved=true`: the main approved selling meaning is approximately preserved.
+
+When `speech_presentation=on_camera_presenter`, it additionally requires:
+
+- `presenter_speaks_on_camera=true`: the visible presenter is the speaking subject rather than a silent demonstrator under narration;
+- `visible_mouth_movement=true`: natural visible mouth movement occurs during the line. Exact frame-level lip sync is not required.
+
+When `speech_presentation=none`, it instead requires:
+
+- `unexpected_speech_absent=true`: no presenter dialogue, voiceover, narration, or other unplanned human speech appears. Approved SFX, ambience, and background music are allowed and do not make the plan “spoken”.
+
+This is an internal output check, not a third user approval or a full creative review. A failure blocks `delivery-manifest.json.status=pass`, preserves the one-submit ledger, and never authorizes an automatic paid retry.
+
+## 4. Optional Clean Multimodal Business Review
 
 Use these practical fields when the user requests a detailed creative review or Codex observes a clear problem:
 
@@ -35,11 +56,9 @@ Use these practical fields when the user requests a detailed creative review or 
 - `presenter_identity_consistency=true` and `presenter_outfit_consistency=true` when a presenter is used;
 - `talent_presence_matches_plan=true`, and `talent_gender_matches_plan=true` when female/male presenter gender was explicitly approved;
 - `scene_composition_consistency=true`: scene and framing broadly match the approved reference/storyboard;
-- when speech was planned, `speech_intelligible=true`: an effective speech interval exists and local transcription or human listening confirms it is understandable;
-- when speech was planned, `speech_meaning_preserved=true`: the main selling meaning is approximately preserved.
 - when female/male voice direction was explicit, `voice_gender_matches_plan=true`.
 
-An AAC stream, music, ambience, or sound effects do not prove speech. Record clear speech problems as notes or an optional business-review failure. New default projects do not convert this optional review into a third mandatory approval gate or automatic paid retry.
+The required voice-contract result remains separate from these optional visual and voice-character observations. New default projects do not convert the full review into a third mandatory approval gate or automatic paid retry.
 
 Speech and non-speech sound are separate observations. When doing the optional review, record `planned_sfx_audible`, `planned_ambience_audible`, optional `planned_music_audible`, `non_speech_sound_supports_story`, and `audio_mix_balanced`. The presence of an AAC stream cannot set these fields to true. Missing layers may use `QC_SOUND_DESIGN_MISSING`; an unusable balance may use `QC_AUDIO_MIX_FAILURE`. These findings never authorize an automatic paid retry.
 
@@ -47,11 +66,11 @@ Do not require word-for-word script reproduction. Packaging lettering, incidenta
 
 `jobs.json.state=verified` means the Provider clip passed technical media verification. New default projects then run `review_render.py` and move from `awaiting_technical_review` to `ready_to_finalize`; only legacy strict plans wait in `awaiting_business_review`.
 
-## 4. Caption Review
+## 5. Caption Review
 
 When subtitles are enabled, review the clean master first, then the separately burned captioned video using `subtitles-and-safe-layout.md`. Keep both artifacts and reviews distinct.
 
-## 5. Final Delivery Gate
+## 6. Final Delivery Gate
 
 For new default projects, `finalize_project.py` may write `delivery-manifest.json` with `status=pass` when:
 
@@ -60,15 +79,16 @@ For new default projects, `finalize_project.py` may write `delivery-manifest.jso
 - every job is verified with exactly one paid submission;
 - clean technical review passes;
 - every Provider clip is within the allowed one-second duration shortfall;
+- the Stage 1 voice-contract report is bound to the clean MP4 and all mode-specific fields pass: required speech for spoken plans, plus visible speaking for on-camera plans, or absence of human speech for `no-speech`;
 - caption review passes when subtitles are enabled;
 - technical and optional caption reviews are bound to the exact clean/captioned MP4 SHA-256 values;
 - the chosen final MP4 exists and has a recorded hash.
 
-Legacy plans without `quality_contract.delivery_review_policy=technical_ready` keep the former strict business-review requirements for backward compatibility. An optional visual/listening report can still be saved on a new plan and appears as warnings rather than a delivery block.
+Legacy plans without `quality_contract.delivery_review_policy=technical_ready` keep the former strict business-review requirements for backward compatibility. An optional full visual/listening report can still be saved on a new plan and appears as warnings rather than a delivery block; the narrow voice-contract report is the only new semantic sound gate and creates no user approval.
 
 If any item fails, keep `finalize-report.json.status=blocked`; do not claim final delivery and do not automatically purchase a repair generation.
 
-## 6. Failure Codes and Minimum Repair Scope
+## 7. Failure Codes and Minimum Repair Scope
 
 Record one or more explicit codes instead of writing only “画面不好”：
 
@@ -81,7 +101,8 @@ Record one or more explicit codes instead of writing only “画面不好”：
 | `QC_HAND_ANATOMY` | Extra/fused fingers or hand-product intersection | replace the hand-action plate and affected clip |
 | `QC_CTA_UNREADABLE` | Local CTA is unreadable or outside the safe zone | redo local packaging only; do not regenerate video |
 | `QC_DURATION_SHORTFALL` | Provider clip is over one second shorter than approved | block delivery; never use long frozen padding |
-| `QC_SPEECH_MISSING` | Planned speech is missing, unintelligible, or loses selling meaning | record an optional business-review note and preserve evidence |
+| `QC_SPEECH_MISSING` | Planned speech is missing, unintelligible, loses selling meaning, or a planned on-camera presenter remains silent | block delivery, preserve evidence, and do not auto-retry |
+| `QC_UNPLANNED_SPEECH` | A Stage 1 no-speech plan contains presenter dialogue, narration, or another human voice | block delivery, preserve evidence, and do not auto-retry |
 | `QC_TALENT_MISMATCH` | An unexpected human appears, presenter is missing, or approved presenter gender changes | record an optional business-review note and inspect references |
 | `QC_VOICE_GENDER_MISMATCH` | Explicit female/male voice direction changes | record an optional business-review note and inspect `AUDIO` |
 | `QC_SOUND_DESIGN_MISSING` | Planned SFX, ambience, or music is absent or inaudible | record an optional business-review note and preserve evidence |

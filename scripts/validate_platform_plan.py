@@ -368,7 +368,12 @@ def validate_model_and_assets(plan: dict, checks: list[dict], model_contract: di
 
     audio_policy = platform.get("audio_policy")
     if audio_policy == "no_audio":
-        add_check(checks, "No-audio placement avoids spoken selling", creative.get("speaker_mode") != "digital-human-spoken", f"speaker_mode={creative.get('speaker_mode')}")
+        add_check(
+            checks,
+            "No-audio placement preserves the fully silent Stage 1 mode",
+            creative.get("speaker_mode") == "silent-captions",
+            f"speaker_mode={creative.get('speaker_mode')}",
+        )
     if creative.get("speaker_mode") == "digital-human-spoken":
         add_check(
             checks,
@@ -602,7 +607,7 @@ def validate_production_core(plan: dict, checks: list[dict], model_contract: dic
         add_check(
             checks,
             "Commercial sound mode is explicit",
-            mode in {"layered_native", "ambience_led", "voice_only"},
+            mode in {"layered_native", "ambience_led", "voice_only", "silent"},
             f"sound_mode={mode}",
             severity="warning",
         )
@@ -636,11 +641,11 @@ def validate_production_core(plan: dict, checks: list[dict], model_contract: dic
             sound_coverage = [
                 (shot.get("prompt_contract") or {}).get("sound_cue_coverage") or {}
                 for shot in shots
-                if (shot.get("prompt_contract") or {}).get("compiler") == "director-commerce-v8"
+                if (shot.get("prompt_contract") or {}).get("compiler") in {"director-commerce-v8", "director-commerce-v9", "director-commerce-v10"}
             ]
             add_check(
                 checks,
-                "Every v8 sound prompt is self-contained and preserves planned clip/beat cues",
+                "Every current director sound prompt is self-contained and preserves planned clip/beat cues",
                 all(
                     item.get("clip_sfx_rendered") is True
                     and item.get("all_beat_cues_rendered_in_timeline") is True

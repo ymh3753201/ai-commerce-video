@@ -28,18 +28,22 @@ These contracts make the plan reviewable before paid generation and keep platfor
 
 ## Speaker Mode
 
-Choose the mode by commercial purpose:
+Choose the mode once in Stage 1 from the user's task, image evidence, platform, and commercial purpose. That approved choice is authoritative for every later prompt and review:
 
 - use a visible model/digital-human only when talent strengthens desire, trust, scale, use proof, or emotion;
 - when a presenter speaks, require natural-looking delivery and plausible mouth movement, but do not promise frame-exact lip sync;
 - use off-screen narration when the product or visual proof should remain the hero;
+- use no human speech when visual action, ambience, effects, or music can carry the ad more effectively;
 - keep Provider frames free of captions; approved subtitles are created locally from the finished speech.
 
 In the proposal, always state one of:
 
 - `digital-human-spoken`: visible presenter speaks;
 - `voiceover`: off-screen narration;
-- `silent-captions`: no speech, captions only.
+- `no-speech`: no human voice, while approved SFX, ambience, and music may remain;
+- `silent-captions`: fully silent placement, with captions only when separately approved.
+
+Also show the plain-language `speech_presentation`: `on_camera_presenter`, `off_screen_voiceover`, or `none`. Treat Chinese requests such as “人物口播”, “主播口播”, “人物讲话”, and “对镜讲解” as `digital-human-spoken` when they are the approved Stage 1 direction. A visible presenter does not decide the voice mode: the presenter may speak, demonstrate silently under voiceover, or perform silently in a no-speech ad. Never rewrite one approved relationship into another after reference generation. Save the director/user decision source and block conflicting mode, presentation, or script fields before Stage 2.
 
 ## Product Motion Policy
 

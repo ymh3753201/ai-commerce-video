@@ -18,7 +18,9 @@ Default 15s:
 
 Best for: consumer goods, home products, small gadgets, daily-use products.
 
-Default speaker mode: visible model/digital-human spoken selling. The presenter talks to camera; do not use off-screen voiceover unless requested.
+This pattern is selected only when Stage 1 intentionally chooses visible model/digital-human spoken selling. The presenter talks to camera because that is the approved creative, not merely because a presenter image exists.
+
+Record `speaker_mode=digital-human-spoken`, `speech_presentation=on_camera_presenter`, and the decision source. Do not write “the presenter demonstrates silently” when the approved plan is described to the user as 人物口播.
 
 Default 15s:
 
@@ -68,7 +70,7 @@ Default 15s:
 
 ## Copy Rules
 
-- Default to presenter spoken copy, not detached narration.
+- Do not impose one universal voice default. Let the Stage 1 director choose on-camera speech, off-screen narration, or no human voice from the task and evidence, then preserve that choice.
 - Keep voiceover short: about 2 to 2.5 Chinese characters per 0.1 second is often too dense; prefer fewer words and stronger rhythm.
 - Put only the strongest claim on screen.
 - Avoid unsupported medical, financial, and guaranteed-result claims.

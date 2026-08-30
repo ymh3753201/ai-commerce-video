@@ -131,13 +131,71 @@ def plan_errors(plan: dict, model: dict) -> list[str]:
         errors.append(
             "Prompt-native speech must not contain <AUDIO_n> tokens when reference_audios is absent; re-prepare the plan"
         )
+    speaker_mode = str((plan.get("creative_contract") or {}).get("speaker_mode") or audio.get("speech_mode") or "")
+    creative = plan.get("creative_contract") or {}
+    expected_presentations = {
+        "digital-human-spoken": "on_camera_presenter",
+        "voiceover": "off_screen_voiceover",
+        "no-speech": "none",
+        "silent-captions": "none",
+    }
+    if speaker_mode not in expected_presentations:
+        errors.append(f"Unsupported speaker_mode in the frozen plan: {speaker_mode!r}")
+    else:
+        if audio.get("speech_mode") and audio.get("speech_mode") != speaker_mode:
+            errors.append("creative_contract.speaker_mode and audio_contract.speech_mode drifted apart")
+        for owner, contract in (("creative_contract", creative), ("audio_contract", audio)):
+            presentation = str(contract.get("speech_presentation") or "")
+            if presentation and presentation != expected_presentations[speaker_mode]:
+                errors.append(
+                    f"{owner}.speech_presentation conflicts with speaker_mode={speaker_mode}"
+                )
+        speech_required = bool(audio.get("speech_required"))
+        if speaker_mode in {"digital-human-spoken", "voiceover"} and not speech_required:
+            errors.append(f"speaker_mode={speaker_mode} requires approved speech")
+        if speaker_mode in {"no-speech", "silent-captions"} and speech_required:
+            errors.append(f"speaker_mode={speaker_mode} forbids human speech")
+    if audio.get("speech_required"):
+        for shot in plan.get("shots") or []:
+            prompt = str(shot.get("prompt") or "")
+            normalized = prompt.casefold()
+            if speaker_mode == "digital-human-spoken":
+                if not all(marker in normalized for marker in ("dialogue=“", "visibly speaks", "natural mouth movement")):
+                    errors.append(
+                        f"{shot.get('id')} on-camera speech prompt must contain Dialogue=, visible speaking, and natural mouth movement"
+                    )
+                if any(value in normalized for value in ("off-screen voiceover", "demonstrates silently", "vo=“")):
+                    errors.append(f"{shot.get('id')} on-camera speech prompt contains voiceover/silent contradictions")
+            elif speaker_mode == "voiceover":
+                if "vo=“" not in normalized or "off-screen voiceover" not in normalized:
+                    errors.append(f"{shot.get('id')} voiceover prompt must use VO= and explicit off-screen narration")
+                if any(value in normalized for value in ("dialogue=“", "visibly speaks", "speaks to camera")):
+                    errors.append(f"{shot.get('id')} voiceover prompt contains on-camera speaking contradictions")
+    elif speaker_mode in {"no-speech", "silent-captions"}:
+        for shot in plan.get("shots") or []:
+            prompt = str(shot.get("prompt") or "")
+            normalized = prompt.casefold()
+            if not all(
+                marker in normalized
+                for marker in ("speech=none", "voice=none", "no spoken dialogue, narration, or voiceover")
+            ):
+                errors.append(f"{shot.get('id')} no-speech prompt does not explicitly forbid human voice")
+            if any(
+                value in normalized
+                for value in ("dialogue=“", "vo=“", "visibly speaks", "speaks to camera", "off-screen voiceover.")
+            ):
+                errors.append(f"{shot.get('id')} no-speech prompt contains spoken-voice contradictions")
     sound = plan.get("sound_design_contract") or {}
     if sound:
         mode = str(sound.get("mode") or "")
-        if mode not in {"layered_native", "ambience_led", "voice_only"}:
-            errors.append("sound_design_contract.mode must be layered_native, ambience_led, or voice_only")
+        if mode not in {"layered_native", "ambience_led", "voice_only", "silent"}:
+            errors.append("sound_design_contract.mode must be layered_native, ambience_led, voice_only, or silent")
         non_speech_required = bool(sound.get("non_speech_required"))
         required_layers = sound.get("required_layers") or {}
+        if speaker_mode == "no-speech" and mode == "voice_only":
+            errors.append("A no-speech plan cannot use voice_only sound design")
+        if speaker_mode == "silent-captions" and (mode != "silent" or non_speech_required):
+            errors.append("A silent-captions plan must preserve a fully silent sound contract")
         if non_speech_required and not sound.get("native_provider_sound"):
             errors.append("The selected route does not support the required native commercial sound plan")
         if non_speech_required and not (required_layers.get("sfx") or required_layers.get("ambience")):
@@ -156,7 +214,7 @@ def plan_errors(plan: dict, model: dict) -> list[str]:
                 if required_layers.get("music") and "Music=no music" in prompt:
                     errors.append(f"{shot.get('id')} requires music but disables it in the Provider prompt")
                 prompt_contract = shot.get("prompt_contract") or {}
-                if prompt_contract.get("compiler") == "director-commerce-v8":
+                if prompt_contract.get("compiler") in {"director-commerce-v8", "director-commerce-v9", "director-commerce-v10"}:
                     coverage = prompt_contract.get("sound_cue_coverage") or {}
                     if coverage.get("clip_sfx_rendered") is not True:
                         errors.append(f"{shot.get('id')} Provider prompt did not preserve the planned clip SFX")

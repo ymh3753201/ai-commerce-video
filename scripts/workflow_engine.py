@@ -11,7 +11,16 @@ import time
 from pathlib import Path
 
 from _common import ScriptError, canonical_digest, load_json
-from _workflow import atomic_write_json, delivery_review_policy, load_or_create_jobs, pollable_request_id, transition_job
+from _workflow import (
+    atomic_write_json,
+    delivery_review_policy,
+    load_or_create_jobs,
+    pollable_request_id,
+    transition_job,
+    voice_contract_review_required,
+    voice_review_errors,
+    voice_review_path,
+)
 from finalize_project import CAPTION_VISUAL_FIELDS
 from review_render import planned_visual_review_fields
 
@@ -31,9 +40,17 @@ def run_worker(args: list[str]) -> tuple[int, dict]:
 def plan_requires_audio(plan: dict) -> bool:
     creative = plan.get("creative_contract") or {}
     platform = plan.get("platform_contract") or {}
-    speaker_mode = str(creative.get("speaker_mode") or "")
+    audio = plan.get("audio_contract") or {}
+    sound = plan.get("sound_design_contract") or {}
     audio_policy = str(platform.get("audio_policy") or "")
-    return audio_policy != "no_audio" and speaker_mode in {"digital-human-spoken", "voiceover"}
+    speech_required = (
+        bool(audio.get("speech_required"))
+        if "speech_required" in audio
+        else str(creative.get("speaker_mode") or "") in {"digital-human-spoken", "voiceover"}
+    )
+    return audio_policy != "no_audio" and bool(
+        speech_required or sound.get("non_speech_required")
+    )
 
 
 def project_stage(project_dir: Path) -> dict:
@@ -67,6 +84,12 @@ def project_stage(project_dir: Path) -> dict:
                 or any(visual.get(field) is not True for field in planned_visual_review_fields(plan_data))
             ):
                 return False
+        if voice_contract_review_required(plan_data):
+            voice_path = voice_review_path(project_dir, plan_data)
+            if not voice_path.exists():
+                return False
+            if voice_review_errors(plan_data, load_json(voice_path), clean_hash):
+                return False
         if subtitles_enabled:
             caption_path = project_dir / "visual-review.json"
             if not caption_path.exists():
@@ -90,11 +113,29 @@ def project_stage(project_dir: Path) -> dict:
             stage = "ready_to_finalize"
         elif technically_verified:
             plan_data = load_json(plan) if plan.exists() else {}
-            stage = (
-                "awaiting_business_review"
-                if delivery_review_policy(plan_data) == "strict_business_review"
-                else "awaiting_technical_review"
+            technical_path = project_dir / (
+                "final-review.clean.json"
+                if bool((plan_data.get("subtitle_plan") or {}).get("enabled"))
+                else "final-review.json"
             )
+            if delivery_review_policy(plan_data) == "strict_business_review":
+                stage = "awaiting_business_review"
+            elif voice_contract_review_required(plan_data) and technical_path.exists():
+                technical = load_json(technical_path)
+                required_voice_path = voice_review_path(project_dir, plan_data)
+                voice_pending = (
+                    not required_voice_path.exists()
+                    or bool(
+                        voice_review_errors(
+                            plan_data,
+                            load_json(required_voice_path) if required_voice_path.exists() else {},
+                            str(technical.get("video_sha256") or ""),
+                        )
+                    )
+                )
+                stage = "awaiting_voice_review" if voice_pending else "awaiting_technical_review"
+            else:
+                stage = "awaiting_technical_review"
         else:
             stage = "generating"
     elif confirmation.exists():
@@ -114,6 +155,11 @@ def project_stage(project_dir: Path) -> dict:
             "preflight": str(preflight) if preflight.exists() else "",
             "confirmation": str(confirmation) if confirmation.exists() else "",
             "jobs": str(jobs_path) if jobs_path.exists() else "",
+            "voice_review": (
+                str(voice_review_path(project_dir, load_json(plan)))
+                if plan.exists() and voice_review_path(project_dir, load_json(plan)).exists()
+                else ""
+            ),
             "finalize": str(finalize) if finalize.exists() else "",
             "delivery": str(delivery) if delivery.exists() else "",
         },

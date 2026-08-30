@@ -8,7 +8,12 @@ import json
 from pathlib import Path
 
 from _common import ScriptError, canonical_digest, load_json, media_summary, sha256_file, write_json
-from _workflow import delivery_review_policy
+from _workflow import (
+    delivery_review_policy,
+    voice_contract_review_required,
+    voice_review_errors,
+    voice_review_path,
+)
 from subtitle_policy import enabled_subtitle_contract_errors
 
 
@@ -60,6 +65,7 @@ def delivery_errors(
     technical_review: dict,
     clean_visual_review: dict | None,
     caption_review: dict | None,
+    voice_review: dict | None = None,
 ) -> list[str]:
     errors: list[str] = []
     clean_visual_review = clean_visual_review or {}
@@ -143,6 +149,8 @@ def delivery_errors(
         or clean_visual_review.get("speech_meaning_preserved") is not True
     ):
         errors.append("Planned speech is missing, unintelligible, or does not preserve the approved selling meaning; visual review must be blocked")
+    if voice_contract_review_required(plan):
+        errors.extend(voice_review_errors(plan, voice_review))
     sound = plan.get("sound_design_contract") or {}
     if strict_business_review and sound.get("verification_required") and sound.get("non_speech_required"):
         sound_fields = [
@@ -188,6 +196,8 @@ def delivery_warnings(plan: dict, clean_visual_review: dict | None) -> list[str]
 
 def planned_optional_review_fields(plan: dict) -> list[str]:
     fields = list(CLEAN_VISUAL_FIELDS)
+    if not bool((plan.get("audio_contract") or {}).get("speech_required")) or voice_contract_review_required(plan):
+        fields = [field for field in fields if field not in {"speech_intelligible", "speech_meaning_preserved"}]
     sound = plan.get("sound_design_contract") or {}
     if sound.get("non_speech_required"):
         fields.extend(SOUND_VISUAL_FIELDS)
@@ -202,6 +212,8 @@ def review_binding_errors(
     clean_visual_review: dict,
     caption_review: dict | None,
     require_visual_review: bool = True,
+    voice_review: dict | None = None,
+    require_voice_review: bool = False,
 ) -> list[str]:
     errors: list[str] = []
     if not clean_video_sha256:
@@ -210,6 +222,8 @@ def review_binding_errors(
         errors.append("Technical review video hash does not match the clean video")
     if require_visual_review and clean_visual_review.get("video_sha256") != clean_video_sha256:
         errors.append("Clean visual review video hash does not match the clean video")
+    if require_voice_review and (voice_review or {}).get("video_sha256") != clean_video_sha256:
+        errors.append("Voice contract review video hash does not match the clean video")
     if subtitles_enabled:
         if not isinstance(caption_review, dict) or caption_review.get("video_sha256") != final_video_sha256:
             errors.append("Caption review video hash does not match the captioned delivery")
@@ -272,9 +286,11 @@ def main() -> int:
         require_visual_review = delivery_review_policy(plan) == "strict_business_review"
         technical_path = project_dir / ("final-review.clean.json" if subtitles_enabled else "final-review.json")
         clean_visual_path = project_dir / ("visual-review.clean.json" if subtitles_enabled else "visual-review.json")
+        required_voice_path = voice_review_path(project_dir, plan)
         caption_path = project_dir / "visual-review.json"
         technical = load_json(technical_path)
         clean_visual = load_json(clean_visual_path) if clean_visual_path.exists() else {}
+        voice_review = load_json(required_voice_path) if required_voice_path.exists() else {}
         caption = load_json(caption_path) if subtitles_enabled and caption_path.exists() else None
         if args.video:
             final_path = Path(args.video).expanduser().resolve()
@@ -285,7 +301,7 @@ def main() -> int:
         artifact = artifact_entry(final_path)
         clean_path = project_dir / "final.mp4" if subtitles_enabled else final_path
         clean_artifact = artifact_entry(clean_path)
-        errors = delivery_errors(plan, jobs, technical, clean_visual, caption)
+        errors = delivery_errors(plan, jobs, technical, clean_visual, caption, voice_review)
         warnings = delivery_warnings(plan, clean_visual)
         errors.extend(contract_binding_errors(plan, jobs, contract, confirmation))
         if not artifact.get("exists"):
@@ -301,6 +317,8 @@ def main() -> int:
                 clean_visual,
                 caption,
                 require_visual_review=require_visual_review,
+                voice_review=voice_review,
+                require_voice_review=voice_contract_review_required(plan),
             )
         )
         report = {
@@ -313,6 +331,7 @@ def main() -> int:
             "clean_artifact": clean_artifact,
             "technical_review": str(technical_path),
             "clean_visual_review": str(clean_visual_path) if clean_visual_path.exists() else "",
+            "voice_review": str(required_voice_path) if required_voice_path.exists() else "",
             "caption_review": str(caption_path) if subtitles_enabled else "",
             "paid_submission_attempts": sum(int(item.get("submission_attempts") or 0) for item in _job_items(jobs)),
             "approved_paid_cap": int((plan.get("production_contract") or {}).get("approved_paid_cap") or 0),
